@@ -1,18 +1,23 @@
 # Camera NVR local para EZVIZ CS-CV206
 
-Sistema web próprio para visualizar e gravar uma câmera EZVIZ via RTSP local, sem depender do cloud da EZVIZ.
+Sistema web proprio para visualizar, gravar e reproduzir uma camera EZVIZ via RTSP local, sem depender do cloud da EZVIZ.
 
-Esta entrega implementa somente a **Fase 1**:
+Esta branch implementa a **Fase 2**:
 
-- Configuração da câmera via `.env`.
-- Login simples com JWT.
-- Live view no navegador via HLS gerado por FFmpeg.
-- Alternância entre stream `main` e `sub`.
-- Gravação segmentada com FFmpeg.
-- Configuração de stream de gravação e tempo de segmento.
-- Histórico de gravações por câmera/data.
-- Assistir, baixar, apagar e marcar gravações como importantes.
-- Schema SQLite preparado para motion zones, eventos, backups e settings futuras.
+- Dashboard em modo DVR com player principal para `Ao vivo` e `Reproducao`.
+- Timeline diaria com blocos de gravacao.
+- Busca por data/hora no dashboard.
+- Playback continuo entre segmentos.
+- Tela de gravacoes com resumo do dia, timeline e tabela tecnica.
+- Storage configuravel pelo painel.
+- Teste de escrita e espaco livre das pastas.
+- Retencao automatica/manual respeitando arquivos protegidos.
+- Backup local manual e agenda diaria/semanal preparada.
+- Logs de gravacao, FFmpeg, backup, retencao e storage.
+- Status e reinicio manual do worker FFmpeg.
+- Restart automatico do FFmpeg com limite de tentativas.
+
+Motion zones, eventos de movimento, Telegram/e-mail e WebSocket ficam para Fase 3/Fase 4.
 
 ## Estrutura
 
@@ -22,9 +27,13 @@ camera-nvr/
     src/
       modules/
         auth/
+        backups/
         cameras/
         live/
+        logs/
+        playback/
         recordings/
+        retention/
         settings/
   frontend/
     src/
@@ -32,7 +41,6 @@ camera-nvr/
       features/
       services/
   worker/
-    README.md
   storage/
     data/
     hls/
@@ -50,7 +58,7 @@ camera-nvr/
 - Node.js 20+ para rodar local sem Docker.
 - FFmpeg e FFprobe instalados no PATH.
 - Docker Desktop, se preferir rodar via Docker Compose.
-- RTSP habilitado na câmera EZVIZ.
+- RTSP habilitado na camera EZVIZ.
 
 Teste FFmpeg no Windows:
 
@@ -58,7 +66,7 @@ Teste FFmpeg no Windows:
 .\scripts\check-ffmpeg.ps1
 ```
 
-## Configuração
+## Configuracao
 
 Crie o `.env`:
 
@@ -80,9 +88,10 @@ DEFAULT_STREAM=sub
 RECORDING_STREAM=main
 SEGMENT_SECONDS=300
 AUTO_RECORDING_ENABLED=true
+TZ=America/Sao_Paulo
 ```
 
-Não coloque a senha real da câmera no código. Ela fica apenas no `.env` e no SQLite local criado pelo backend.
+Nao coloque a senha real da camera no codigo. Ela fica apenas no `.env` e no SQLite local criado pelo backend.
 
 ## Testar RTSP no VLC
 
@@ -93,7 +102,7 @@ rtsp://admin:CODIGO@IP_DA_CAMERA:554/ch1/main
 rtsp://admin:CODIGO@IP_DA_CAMERA:554/ch1/sub
 ```
 
-Se não abrir no VLC, o sistema também não conseguirá abrir. Verifique IP, código/senha, porta 554 e se a câmera está na mesma rede.
+Se nao abrir no VLC, o sistema tambem nao conseguira abrir. Verifique IP, codigo/senha, porta 554 e se a camera esta na mesma rede.
 
 ## Rodar com Docker
 
@@ -110,7 +119,25 @@ Frontend: http://localhost:3000
 Backend:  http://localhost:4000/health
 ```
 
-O container do backend já instala FFmpeg.
+O backend do Docker ja instala FFmpeg.
+
+Volume padrao:
+
+```yaml
+volumes:
+  - ./storage:/app/storage
+```
+
+Exemplo usando disco externo no host:
+
+```yaml
+services:
+  backend:
+    volumes:
+      - /mnt/dvr-storage:/app/storage
+```
+
+Dentro do painel, use caminhos que existam dentro do container, por exemplo `/app/storage/recordings`. Se apontar para uma pasta aleatoria do host sem volume montado, o backend nao tera acesso.
 
 ## Rodar local em desenvolvimento
 
@@ -136,19 +163,27 @@ cd ..\frontend
 npm run dev
 ```
 
-## Como usar
+## Dashboard DVR
 
-1. Entre em `http://localhost:3000`.
-2. Faça login com `ADMIN_EMAIL` e `ADMIN_PASSWORD` do `.env`.
-3. Acesse `/dashboard`.
-4. Clique em `Verificar RTSP` para validar o stream atual.
-5. Clique em `Iniciar live` para gerar HLS e ver a câmera.
-6. Alterne entre `sub` e `main` pelos botões do player.
-7. Ajuste `Segmentação` e `Stream de gravação`.
-8. Clique em `Iniciar gravação`.
-9. Acesse `/recordings` para listar os arquivos.
+Entre em `/dashboard`.
 
-## Gravação segmentada
+O player principal tem dois modos:
+
+- `Ao vivo`: abre o HLS automaticamente, sem botao de iniciar live.
+- `Reproducao`: toca gravacoes antigas no mesmo player.
+
+No modo reproducao:
+
+1. Escolha a data.
+2. Escolha o horario.
+3. Clique em `Ir para horario`.
+4. Use a timeline para clicar em um ponto do dia.
+5. Use `10s` para voltar/avancar.
+6. Clique em `Voltar ao vivo` para retornar ao stream atual.
+
+Quando um segmento termina, o player tenta carregar o proximo automaticamente. Se houver buraco entre arquivos, aparece um aviso discreto de intervalo sem gravacao.
+
+## Gravacao segmentada
 
 O backend inicia FFmpeg com transporte TCP:
 
@@ -163,24 +198,135 @@ ffmpeg -rtsp_transport tcp -i "$RTSP_MAIN" \
   "storage/recordings/camera-sala/YYYY-MM-DD/%H-%M-%S.mp4"
 ```
 
-Os arquivos são salvos por câmera e data:
+Arquivos:
 
 ```txt
 storage/recordings/camera-sala/2026-05-17/14-00-00.mp4
 storage/recordings/camera-sala/2026-05-17/14-05-00.mp4
 ```
 
-O backend indexa os MP4 no SQLite automaticamente a cada 15 segundos e também quando a tela de gravações é aberta.
+O scanner indexa MP4 no SQLite a cada 15 segundos. Arquivos recentes/em gravacao sao marcados para nao entrarem em backup ou retencao.
 
-## Live view
+## Tela de gravacoes
 
-O navegador não acessa RTSP direto. O backend cria HLS temporário em:
+Entre em `/recordings`.
+
+Ela mostra:
+
+- Data escolhida.
+- Timeline do dia.
+- Total gravado.
+- Quantidade de arquivos.
+- Espaco usado.
+- Quantidade protegida.
+- Player com continuidade entre segmentos.
+- Tabela tecnica com assistir, baixar, backup, proteger e apagar.
+
+O usuario nao precisa pensar em MP4 para assistir. A tabela fica como detalhe operacional.
+
+## Storage
+
+Entre em `/settings/storage`.
+
+Campos principais:
+
+- Pasta de gravacoes.
+- Pasta de backups.
+- Pasta de snapshots.
+- Dias de retencao.
+- Apagar automaticamente.
+- Apagar somente depois de backup.
+- Backup automatico ligado/desligado.
+- Agenda manual, diaria ou semanal.
+- Horario do backup.
+- Modo copiar/mover.
+- Alerta de disco.
+
+Antes de salvar uma pasta, use `Testar escrita`. O backend tenta criar a pasta, gravar um arquivo temporario e consultar espaco livre.
+
+## Retencao
+
+A retencao roda:
+
+- Ao iniciar o backend.
+- A cada 1 hora.
+- Manualmente em `/settings/storage`.
+
+Regras:
+
+- Nunca apaga arquivo protegido.
+- Nunca apaga arquivo ainda em gravacao.
+- Se `Apagar somente depois de backup` estiver ligado, apaga apenas `backed_up`.
+- Arquivos ausentes no disco sao marcados como `missing`.
+- Arquivos apagados pela retencao ficam como `deleted` no banco.
+
+## Backup local
+
+O backup pode ser executado:
+
+- Manualmente em `/settings/storage`.
+- Por dia em `/recordings`.
+- Por arquivo na tabela de `/recordings`.
+- Automaticamente se `Backup automatico` estiver ligado.
+
+Estrutura padrao:
 
 ```txt
-storage/hls/
+storage/backups/
+  camera-sala/
+    2026-05-17/
+      16-01-01.mp4
 ```
 
-O frontend consome playlists protegidas por JWT. O RTSP e a senha da câmera não são enviados ao navegador.
+O sistema nao faz backup de arquivo ainda em gravacao e nao duplica backup ja concluido.
+
+## Logs
+
+Entre em `/logs`.
+
+Tipos:
+
+- `recording`
+- `backup`
+- `retention`
+- `storage`
+- `ffmpeg`
+- `system`
+
+Niveis:
+
+- `info`
+- `warning`
+- `error`
+
+Use filtros por tipo, nivel, data e texto. O botao `Limpar antigos` remove logs com mais de 30 dias.
+
+## Worker FFmpeg
+
+O dashboard mostra:
+
+- Status atual.
+- PID.
+- Uptime.
+- Ultimo segmento indexado.
+- Quantidade de reinicios.
+- Ultimo erro.
+
+Se FFmpeg cair em gravacao automatica, o backend tenta reiniciar. O limite atual e 5 tentativas em 10 minutos para evitar loop infinito.
+
+Endpoints principais:
+
+```txt
+GET  /api/recordings/worker/status
+POST /api/recordings/worker/restart
+GET  /api/playback/segments?cameraId=1&date=2026-05-17
+GET  /api/playback/seek?cameraId=1&datetime=2026-05-17T16:03:20
+POST /api/settings/storage/test
+POST /api/retention/run
+POST /api/backups/run
+POST /api/backups/day
+GET  /api/logs
+```
 
 ## Banco de dados
 
@@ -190,7 +336,7 @@ SQLite local:
 storage/data/nvr.sqlite
 ```
 
-Tabelas criadas:
+Tabelas principais:
 
 - `users`
 - `cameras`
@@ -199,33 +345,23 @@ Tabelas criadas:
 - `motion_events`
 - `settings`
 - `backup_logs`
+- `system_logs`
 
-## Segurança
+Na Fase 2, `recordings` ganhou campos de status, backup e exclusao logica para preservar historico operacional.
+
+## Seguranca
 
 - Login com JWT.
 - Senha do painel salva com hash bcrypt.
-- RTSP não aparece no frontend.
+- RTSP nao aparece no frontend.
 - `.env` fica ignorado pelo Git.
-- Por padrão, exponha isso só na rede local.
-- Para acesso externo, use VPN/Tailscale/WireGuard em vez de abrir portas públicas.
+- Por padrao, exponha isso so na rede local.
+- Para acesso externo, use VPN/Tailscale/WireGuard em vez de abrir portas publicas.
 
-## Fases futuras
+## Limitacoes conhecidas
 
-Fase 2:
-
-- Retenção automática por `RETENTION_DAYS`.
-- Backup local diário/semanal/manual.
-- Logs de limpeza e backup.
-
-Fase 3:
-
-- `/motion-zones` com canvas.
-- Captura de frames do stream `sub`.
-- Comparação de pixels por região.
-- Eventos com snapshot.
-
-Fase 4:
-
-- WebSocket para eventos em tempo real.
-- Telegram/e-mail/webhook.
-- Reforços de segurança e usuários.
+- Motion detection ainda nao foi implementado.
+- Eventos de movimento e snapshots entram na Fase 3.
+- Telegram/e-mail/webhook entram na Fase 4.
+- Backup compactado `.zip` esta reservado como configuracao futura.
+- Alterar path no Docker exige volume montado; o painel valida escrita, mas nao consegue montar disco do host sozinho.

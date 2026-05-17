@@ -21,6 +21,8 @@ export type Camera = {
 export type RecordingSettings = {
   segmentSeconds: number;
   retentionDays: number;
+  retentionAutoDeleteEnabled: boolean;
+  retentionRequireBackup: boolean;
   autoRecordingEnabled: boolean;
   recordingStream: StreamKind;
   defaultStream: StreamKind;
@@ -37,6 +39,19 @@ export type RecordingStatus = {
   autoRecordingEnabled: boolean;
   reason?: "manual" | "auto";
   pid?: number;
+};
+
+export type WorkerStatus = {
+  cameraId: number;
+  running: boolean;
+  pid: number | null;
+  uptimeSeconds: number;
+  currentOutputPath: string | null;
+  lastSegmentAt: string | null;
+  restartCount: number;
+  lastError: string | null;
+  segmentSeconds: number;
+  stream: StreamKind;
 };
 
 export type LiveStatus = {
@@ -57,6 +72,106 @@ export type Recording = {
   durationSeconds: number | null;
   fileSize: number;
   isProtected: boolean;
+  status: string;
+  backupStatus: string;
+  backupPath: string | null;
+  deletedAt: string | null;
+  isCurrentlyRecording: boolean;
+  createdAt: string;
+};
+
+export type PlaybackSegment = {
+  id: number;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  fileSize: number;
+  isProtected: boolean;
+  backupStatus: string;
+  status: string;
+  url: string;
+};
+
+export type PlaybackSeekResult = {
+  recordingId: number;
+  offsetSeconds: number;
+  url: string;
+  nextRecordingId: number | null;
+  segment: PlaybackSegment;
+};
+
+export type StorageSettings = {
+  recordingsPath: string;
+  backupPath: string;
+  snapshotsPath: string;
+  retentionDays: number;
+  retentionAutoDeleteEnabled: boolean;
+  retentionRequireBackup: boolean;
+  backupEnabled: boolean;
+  backupSchedule: "manual" | "daily" | "weekly";
+  backupTime: string;
+  backupKeepStructure: boolean;
+  backupMode: "copy" | "move";
+  backupCompress: boolean;
+  diskAlertPercent: number;
+  storageMaxBytes: number | null;
+};
+
+export type StoragePathTest = {
+  path: string;
+  resolvedPath: string;
+  exists: boolean;
+  created: boolean;
+  canWrite: boolean;
+  freeSpaceBytes: number | null;
+  totalSpaceBytes: number | null;
+  success: boolean;
+  warnings: string[];
+};
+
+export type StorageStatus = {
+  settings: StorageSettings;
+  recordings: StoragePathTest & { usedBytes: number };
+  backups: StoragePathTest & { usedBytes: number };
+  snapshots: StoragePathTest & { usedBytes: number };
+  totalUsedBytes: number;
+  docker: boolean;
+};
+
+export type RetentionResult = {
+  scanned: number;
+  deleted: number;
+  skipped: number;
+  missing: number;
+  logs: string[];
+};
+
+export type BackupResult = {
+  recordingId: number;
+  status: "backed_up" | "skipped" | "failed";
+  message: string;
+  sourcePath?: string;
+  backupPath?: string;
+};
+
+export type BackupLog = {
+  id: number;
+  cameraId: number | null;
+  recordingId: number | null;
+  status: string;
+  message: string;
+  sourcePath: string | null;
+  backupPath: string | null;
+  contextJson: string | null;
+  createdAt: string;
+};
+
+export type SystemLog = {
+  id: number;
+  type: "recording" | "backup" | "retention" | "storage" | "ffmpeg" | "system";
+  level: "info" | "warning" | "error";
+  message: string;
+  contextJson: string | null;
   createdAt: string;
 };
 
@@ -100,6 +215,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return data as T;
+}
+
+function queryString(values: Record<string, string | number | boolean | undefined | null>): string {
+  const params = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  });
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 export const api = {
@@ -173,12 +297,16 @@ export const api = {
     return request<RecordingStatus>(`/api/recording/${cameraId}/stop`, { method: "POST" });
   },
 
+  async getWorkerStatus() {
+    return request<WorkerStatus>("/api/recordings/worker/status");
+  },
+
+  async restartWorker() {
+    return request<RecordingStatus>("/api/recordings/worker/restart", { method: "POST" });
+  },
+
   async getRecordings(filters: { cameraId?: number; date?: string }) {
-    const params = new URLSearchParams();
-    if (filters.cameraId) params.set("cameraId", String(filters.cameraId));
-    if (filters.date) params.set("date", filters.date);
-    const query = params.toString();
-    return request<{ recordings: Recording[] }>(`/api/recordings${query ? `?${query}` : ""}`);
+    return request<{ recordings: Recording[] }>(`/api/recordings${queryString(filters)}`);
   },
 
   async setRecordingProtected(recordingId: number, isProtected: boolean) {
@@ -190,5 +318,78 @@ export const api = {
 
   async deleteRecording(recordingId: number) {
     return request<void>(`/api/recordings/${recordingId}`, { method: "DELETE" });
+  },
+
+  async getPlaybackSegments(cameraId: number, date: string) {
+    return request<PlaybackSegment[]>(`/api/playback/segments${queryString({ cameraId, date })}`);
+  },
+
+  async seekPlayback(cameraId: number, datetime: string) {
+    return request<PlaybackSeekResult>(`/api/playback/seek${queryString({ cameraId, datetime })}`);
+  },
+
+  async getStorageStatus() {
+    return request<StorageStatus>("/api/settings/storage");
+  },
+
+  async getStorageSettings() {
+    return request<{ settings: StorageSettings }>("/api/settings/storage/raw");
+  },
+
+  async saveStorageSettings(settings: StorageSettings) {
+    return request<{ settings: StorageSettings }>("/api/settings/storage", {
+      method: "POST",
+      body: JSON.stringify(settings)
+    });
+  },
+
+  async testStoragePath(path: string) {
+    return request<StoragePathTest>("/api/settings/storage/test", {
+      method: "POST",
+      body: JSON.stringify({ path })
+    });
+  },
+
+  async runRetention() {
+    return request<{ result: RetentionResult }>("/api/retention/run", { method: "POST" });
+  },
+
+  async runBackup(filters: { cameraId?: number; date?: string } = {}) {
+    return request<{ results: BackupResult[] }>("/api/backups/run", {
+      method: "POST",
+      body: JSON.stringify(filters)
+    });
+  },
+
+  async backupRecording(recordingId: number) {
+    return request<{ result: BackupResult }>(`/api/backups/recording/${recordingId}`, { method: "POST" });
+  },
+
+  async backupDay(cameraId: number, date: string) {
+    return request<{ results: BackupResult[] }>("/api/backups/day", {
+      method: "POST",
+      body: JSON.stringify({ cameraId, date })
+    });
+  },
+
+  async getBackupLogs() {
+    return request<{ logs: BackupLog[] }>("/api/backups/logs");
+  },
+
+  async getLogs(filters: {
+    type?: SystemLog["type"];
+    level?: SystemLog["level"];
+    date?: string;
+    search?: string;
+    limit?: number;
+  } = {}) {
+    return request<{ logs: SystemLog[] }>(`/api/logs${queryString(filters)}`);
+  },
+
+  async clearOldLogs(days: number) {
+    return request<{ deleted: number }>("/api/logs/old", {
+      method: "DELETE",
+      body: JSON.stringify({ days })
+    });
   }
 };

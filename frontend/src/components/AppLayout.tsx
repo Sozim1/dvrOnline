@@ -1,4 +1,4 @@
-import { HardDrive, LogOut, RadioTower, Video } from "lucide-react";
+import { FileText, HardDrive, LogOut, RadioTower, Settings, Video } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../features/auth/AuthContext";
 
@@ -25,7 +25,15 @@ export function AppLayout() {
           </NavLink>
           <NavLink to="/recordings">
             <HardDrive size={18} />
-            Gravações
+            Gravacoes
+          </NavLink>
+          <NavLink to="/settings/storage">
+            <Settings size={18} />
+            Storage
+          </NavLink>
+          <NavLink to="/logs">
+            <FileText size={18} />
+            Logs
           </NavLink>
         </nav>
 
