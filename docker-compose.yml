@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: camera-nvr-backend
+    env_file:
+      - .env
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
+    networks:
+      - camera-nvr
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: "http://localhost:${BACKEND_PORT:-4000}"
+    container_name: camera-nvr-frontend
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - camera-nvr
+
+networks:
+  camera-nvr:
+    driver: bridge
