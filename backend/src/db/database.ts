@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS recordings (
   duration_seconds INTEGER,
   file_size INTEGER NOT NULL DEFAULT 0,
   is_protected INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'available',
+  backup_status TEXT NOT NULL DEFAULT 'pending',
+  backup_path TEXT,
+  deleted_at TEXT,
+  is_currently_recording INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
 );
@@ -81,11 +86,22 @@ CREATE TABLE IF NOT EXISTS backup_logs (
   finished_at TEXT,
   status TEXT NOT NULL,
   message TEXT,
+  context_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS system_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL,
+  context_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_recordings_camera_started ON recordings(camera_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_motion_events_camera_detected ON motion_events(camera_id, detected_at);
+CREATE INDEX IF NOT EXISTS idx_system_logs_created ON system_logs(created_at);
 `;
 
 export function initDatabase(): Database.Database {
@@ -101,6 +117,7 @@ export function initDatabase(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(schema);
+  migrateDatabase(db);
   seedInitialData(db);
   return db;
 }
@@ -141,15 +158,25 @@ function seedInitialData(database: Database.Database): void {
   const defaults: Array<[string, string]> = [
     ["segment_seconds", String(env.segmentSeconds)],
     ["retention_days", String(env.retentionDays)],
+    ["retention_auto_delete_enabled", "true"],
+    ["retention_require_backup", "false"],
     ["auto_recording_enabled", String(env.autoRecordingEnabled)],
     ["recording_stream", env.recordingStream],
     ["default_stream", env.defaultStream],
     ["motion_stream", env.motionStream],
     ["motion_enabled", String(env.motionEnabled)],
     ["motion_sensitivity", String(env.motionSensitivity)],
+    ["recordings_path", env.recordingsPath],
+    ["snapshots_path", env.snapshotsPath],
     ["backup_enabled", "false"],
     ["backup_schedule", "manual"],
-    ["backup_path", env.backupPath]
+    ["backup_time", "02:00"],
+    ["backup_path", env.backupPath],
+    ["backup_keep_structure", "true"],
+    ["backup_mode", "copy"],
+    ["backup_compress", "false"],
+    ["disk_alert_percent", "85"],
+    ["storage_max_bytes", ""]
   ];
 
   const insert = database.prepare(`
@@ -160,4 +187,24 @@ function seedInitialData(database: Database.Database): void {
     for (const entry of entries) insert.run(entry[0], entry[1]);
   });
   transaction(defaults);
+}
+
+function migrateDatabase(database: Database.Database): void {
+  addColumnIfMissing(database, "recordings", "status", "TEXT NOT NULL DEFAULT 'available'");
+  addColumnIfMissing(database, "recordings", "backup_status", "TEXT NOT NULL DEFAULT 'pending'");
+  addColumnIfMissing(database, "recordings", "backup_path", "TEXT");
+  addColumnIfMissing(database, "recordings", "deleted_at", "TEXT");
+  addColumnIfMissing(database, "recordings", "is_currently_recording", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "backup_logs", "context_json", "TEXT");
+}
+
+function addColumnIfMissing(
+  database: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void {
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }

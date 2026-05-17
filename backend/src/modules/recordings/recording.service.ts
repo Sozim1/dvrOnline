@@ -22,10 +22,13 @@ import {
   deleteRecordingRow,
   getRecordingById,
   listRecordings,
+  clearCurrentRecordingFlags,
   setRecordingProtected,
   upsertRecording,
   type PublicRecording
 } from "./recordings.repository";
+import { getStorageSettings } from "../settings/settings.repository";
+import { writeLog } from "../logs/logs.service";
 
 type RecordingProcessState = {
   cameraId: number;
@@ -53,6 +56,10 @@ class RecordingService {
   private processes = new Map<number, RecordingProcessState>();
   private midnightTimers = new Map<number, NodeJS.Timeout>();
   private intentionalStopProcesses = new WeakSet<ChildProcess>();
+  private restartHistory = new Map<number, number[]>();
+  private restartCount = new Map<number, number>();
+  private lastError = new Map<number, string | null>();
+  private lastSegmentAt = new Map<number, string | null>();
   private scanTimer?: NodeJS.Timeout;
 
   startScanner(): void {
@@ -72,7 +79,12 @@ class RecordingService {
     for (const camera of listActiveCameraRows()) {
       try {
         this.startRecording(camera.id, "auto");
+        writeLog("recording", "info", "Gravacao automatica iniciada.", { cameraId: camera.id });
       } catch (error) {
+        writeLog("recording", "error", "Auto gravacao nao iniciou.", {
+          cameraId: camera.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
         console.error(`[recording:${camera.id}] auto gravacao nao iniciou`, error);
       }
     }
@@ -103,7 +115,8 @@ class RecordingService {
     const rtspUrl = stream === "main" ? camera.rtsp_main : camera.rtsp_sub;
     if (!rtspUrl) throw new HttpError(400, `Stream ${stream} nao configurado para gravacao.`);
 
-    const dayDir = path.join(env.recordingsPath, slugify(camera.name), localDateFolder());
+    const storage = getStorageSettings();
+    const dayDir = path.join(storage.recordingsPath, slugify(camera.name), localDateFolder());
     ensureDir(dayDir);
 
     const outputPattern = path.join(dayDir, "%H-%M-%S.mp4");
@@ -140,12 +153,27 @@ class RecordingService {
       process: child
     };
 
+    clearCurrentRecordingFlags(cameraId);
+    writeLog("recording", "info", "FFmpeg de gravacao iniciado.", {
+      cameraId,
+      stream,
+      outputDir: dayDir,
+      segmentSeconds: settings.segmentSeconds,
+      reason
+    });
+
     child.stderr?.on("data", (chunk) => {
       const text = chunk.toString().trim();
-      if (text) console.warn(`[recording:${cameraId}] ${text}`);
+      if (text) {
+        this.lastError.set(cameraId, text);
+        writeLog("ffmpeg", "warning", "Mensagem do FFmpeg de gravacao.", { cameraId, message: text });
+        console.warn(`[recording:${cameraId}] ${text}`);
+      }
     });
 
     child.on("error", (error) => {
+      this.lastError.set(cameraId, error.message);
+      writeLog("ffmpeg", "error", "Falha ao iniciar FFmpeg de gravacao.", { cameraId, error: error.message });
       console.error(`[recording:${cameraId}] falha ao iniciar ffmpeg`, error);
       this.clearProcess(cameraId);
     });
@@ -157,6 +185,11 @@ class RecordingService {
         this.clearProcess(cameraId);
       }
       this.scanCameraRecordings(camera);
+      writeLog(wasIntentional ? "recording" : "ffmpeg", wasIntentional ? "info" : "warning", "FFmpeg de gravacao finalizado.", {
+        cameraId,
+        code,
+        wasIntentional
+      });
       if (!wasIntentional && reason === "auto" && getRecordingSettings().autoRecordingEnabled) {
         this.scheduleAutoRestart(cameraId);
       }
@@ -173,6 +206,8 @@ class RecordingService {
       this.intentionalStopProcesses.add(existing.process);
       existing.process.kill("SIGTERM");
       this.clearProcess(cameraId);
+      clearCurrentRecordingFlags(cameraId);
+      writeLog("recording", "info", "Gravacao parada manualmente.", { cameraId });
     }
 
     const settings = getRecordingSettings();
@@ -221,7 +256,7 @@ class RecordingService {
     if (!recording) throw new HttpError(404, "Gravacao nao encontrada.");
 
     const filePath = resolveStoredPath(recording.filePath);
-    assertInside(filePath, env.recordingsPath);
+    assertInside(filePath, getStorageSettings().recordingsPath);
     if (!fs.existsSync(filePath)) throw new HttpError(404, "Arquivo da gravacao nao encontrado.");
 
     return { recording, filePath };
@@ -231,16 +266,51 @@ class RecordingService {
     const { filePath } = this.getRecordingFilePath(recordingId);
     fs.rmSync(filePath, { force: true });
     deleteRecordingRow(recordingId);
+    writeLog("recording", "info", "Gravacao apagada manualmente.", { recordingId, filePath });
   }
 
   protectRecording(recordingId: number, isProtected: boolean): PublicRecording {
     const recording = setRecordingProtected(recordingId, isProtected);
     if (!recording) throw new HttpError(404, "Gravacao nao encontrada.");
+    writeLog("recording", "info", isProtected ? "Gravacao protegida." : "Protecao removida da gravacao.", {
+      recordingId
+    });
     return recording;
   }
 
+  getWorkerStatus(cameraId = 1) {
+    const state = this.processes.get(cameraId);
+    const running = Boolean(state && this.isProcessRunning(state.process));
+    const started = state ? new Date(state.startedAt).getTime() : 0;
+    return {
+      cameraId,
+      running,
+      pid: state?.process.pid ?? null,
+      uptimeSeconds: running ? Math.floor((Date.now() - started) / 1000) : 0,
+      currentOutputPath: state?.outputDir ?? null,
+      lastSegmentAt: this.lastSegmentAt.get(cameraId) ?? null,
+      restartCount: this.restartCount.get(cameraId) ?? 0,
+      lastError: this.lastError.get(cameraId) ?? null,
+      segmentSeconds: state?.segmentSeconds ?? getRecordingSettings().segmentSeconds,
+      stream: state?.stream ?? getRecordingSettings().recordingStream
+    };
+  }
+
+  restartWorker(cameraId = 1): RecordingStatus {
+    const existing = this.processes.get(cameraId);
+    const reason = existing?.reason ?? "auto";
+    if (existing) {
+      this.intentionalStopProcesses.add(existing.process);
+      existing.process.kill("SIGTERM");
+      this.clearProcess(cameraId);
+    }
+    const status = this.startRecording(cameraId, reason);
+    writeLog("ffmpeg", "info", "Worker FFmpeg reiniciado manualmente.", { cameraId });
+    return status;
+  }
+
   private scanCameraRecordings(camera: CameraRow): void {
-    const root = path.join(env.recordingsPath, slugify(camera.name));
+    const root = path.join(getStorageSettings().recordingsPath, slugify(camera.name));
     if (!fs.existsSync(root)) return;
 
     const settings = getRecordingSettings();
@@ -257,7 +327,11 @@ class RecordingService {
         const stat = fs.statSync(fullPath);
         if (stat.size <= 0) continue;
 
+        const isCurrentFile =
+          this.processes.get(camera.id)?.outputDir === dirPath &&
+          Date.now() - stat.mtime.getTime() < (settings.segmentSeconds + 30) * 1000;
         const timing = getTimingFromFile(dateDir.name, file.name, stat, settings.segmentSeconds);
+        this.lastSegmentAt.set(camera.id, timing.startedAt);
 
         upsertRecording({
           cameraId: camera.id,
@@ -265,7 +339,9 @@ class RecordingService {
           startedAt: timing.startedAt,
           endedAt: timing.endedAt,
           durationSeconds: settings.segmentSeconds,
-          fileSize: stat.size
+          fileSize: stat.size,
+          status: "available",
+          isCurrentlyRecording: isCurrentFile
         });
       }
     }
@@ -309,17 +385,44 @@ class RecordingService {
   }
 
   private scheduleAutoRestart(cameraId: number): void {
+    if (!this.canRestart(cameraId)) {
+      writeLog("ffmpeg", "error", "Limite de reinicios automaticos do FFmpeg atingido.", { cameraId });
+      return;
+    }
+
     setTimeout(() => {
       if (!getRecordingSettings().autoRecordingEnabled) return;
       if (this.processes.has(cameraId)) return;
 
       try {
+        this.incrementRestart(cameraId);
         this.startRecording(cameraId, "auto");
+        writeLog("ffmpeg", "warning", "FFmpeg reiniciado automaticamente.", { cameraId });
       } catch (error) {
         console.error(`[recording:${cameraId}] falha ao reiniciar gravacao automatica`, error);
+        writeLog("ffmpeg", "error", "Falha ao reiniciar FFmpeg automaticamente.", {
+          cameraId,
+          error: error instanceof Error ? error.message : String(error)
+        });
         this.scheduleAutoRestart(cameraId);
       }
     }, 5000).unref?.();
+  }
+
+  private canRestart(cameraId: number): boolean {
+    const now = Date.now();
+    const windowMs = 10 * 60 * 1000;
+    const recent = (this.restartHistory.get(cameraId) ?? []).filter((entry) => now - entry < windowMs);
+    this.restartHistory.set(cameraId, recent);
+    return recent.length < 5;
+  }
+
+  private incrementRestart(cameraId: number): void {
+    const now = Date.now();
+    const recent = this.restartHistory.get(cameraId) ?? [];
+    recent.push(now);
+    this.restartHistory.set(cameraId, recent);
+    this.restartCount.set(cameraId, (this.restartCount.get(cameraId) ?? 0) + 1);
   }
 
   private clearProcess(cameraId: number): void {

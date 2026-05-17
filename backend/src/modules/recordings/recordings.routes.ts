@@ -13,6 +13,20 @@ const listQuerySchema = z.object({
 });
 
 recordingRoutes.get(
+  "/recordings/worker/status",
+  asyncHandler(async (_req, res) => {
+    res.json(recordingService.getWorkerStatus(1));
+  })
+);
+
+recordingRoutes.post(
+  "/recordings/worker/restart",
+  asyncHandler(async (_req, res) => {
+    res.json(recordingService.restartWorker(1));
+  })
+);
+
+recordingRoutes.get(
   "/recording/:cameraId/status",
   asyncHandler(async (req, res) => {
     res.json(recordingService.status(Number(req.params.cameraId)));

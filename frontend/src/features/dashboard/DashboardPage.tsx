@@ -1,35 +1,117 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CircleStop, Play, RefreshCw, Save, Settings2, Video } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  CircleStop,
+  Clock,
+  HardDrive,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Settings2,
+  SkipBack,
+  SkipForward,
+  TimerReset,
+  Video
+} from "lucide-react";
+import { DayTimeline } from "../../components/DayTimeline";
 import { HlsPlayer } from "../../components/HlsPlayer";
 import {
   api,
   type Camera,
+  type PlaybackSegment,
   type RecordingSettings,
   type RecordingStatus,
-  type StreamKind
+  type StorageStatus,
+  type StreamKind,
+  type WorkerStatus
 } from "../../services/api";
 
 const segmentOptions = [60, 300, 600, 1800];
+const daySeconds = 24 * 60 * 60;
 
 function withCacheBust(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}v=${Date.now()}`;
 }
 
+function todayInputValue(): string {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function timeInputValue(date = new Date()): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+}
+
+function secondsToClock(totalSeconds: number): string {
+  const safe = Math.max(0, Math.min(daySeconds - 1, Math.floor(totalSeconds)));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function secondsOfDay(value: string | null): number {
+  if (!value) return 0;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+}
+
+function segmentEndSeconds(segment: PlaybackSegment): number {
+  if (segment.endedAt) return secondsOfDay(segment.endedAt);
+  return secondsOfDay(segment.startedAt) + (segment.durationSeconds ?? 0);
+}
+
+function formatBytes(bytes?: number | null): string {
+  const value = bytes ?? 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function formatDuration(seconds?: number | null): string {
+  const value = seconds ?? 0;
+  if (value < 60) return `${value}s`;
+  if (value < 3600) return `${Math.round(value / 60)} min`;
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.round((value % 3600) / 60);
+  return `${hours}h ${minutes}min`;
+}
+
 export function DashboardPage() {
+  const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [mode, setMode] = useState<"live" | "playback">("live");
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedStream, setSelectedStream] = useState<StreamKind>("sub");
   const [playlistUrl, setPlaylistUrl] = useState("");
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus | null>(null);
+  const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
   const [settings, setSettings] = useState<RecordingSettings | null>(null);
   const [segmentSeconds, setSegmentSeconds] = useState(300);
   const [recordingStream, setRecordingStream] = useState<StreamKind>("main");
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState(false);
+  const [playbackDate, setPlaybackDate] = useState(todayInputValue());
+  const [playbackTime, setPlaybackTime] = useState(timeInputValue());
+  const [playbackSegments, setPlaybackSegments] = useState<PlaybackSegment[]>([]);
+  const [playbackSource, setPlaybackSource] = useState("");
+  const [playbackKey, setPlaybackKey] = useState("");
+  const [playbackOffset, setPlaybackOffset] = useState(0);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<number | null>(null);
+  const [playbackCurrentSecond, setPlaybackCurrentSecond] = useState<number | null>(null);
+  const [playbackNotice, setPlaybackNotice] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [isLiveLoading, setIsLiveLoading] = useState(false);
 
   const camera = cameras[0];
+
+  const loadPlaybackSegments = useCallback(async (cameraId: number, date: string) => {
+    setPlaybackSegments(await api.getPlaybackSegments(cameraId, date));
+  }, []);
 
   const startLiveForCamera = useCallback(
     async (cameraId: number, stream: StreamKind, showMessage = false) => {
@@ -49,14 +131,23 @@ export function DashboardPage() {
     []
   );
 
+  const refreshOperationalStatus = useCallback(async (cameraId: number) => {
+    const [recording, worker, storage] = await Promise.all([
+      api.getRecordingStatus(cameraId),
+      api.getWorkerStatus(),
+      api.getStorageStatus()
+    ]);
+    setRecordingStatus(recording);
+    setWorkerStatus(worker);
+    setStorageStatus(storage);
+  }, []);
+
   const loadInitialData = useCallback(async () => {
     setError("");
     try {
-      const cameraResponse = await api.getCameras();
+      const [cameraResponse, settingsResponse] = await Promise.all([api.getCameras(), api.getSettings()]);
       const activeCamera = cameraResponse.cameras[0];
       setCameras(cameraResponse.cameras);
-
-      const settingsResponse = await api.getSettings();
       setSettings(settingsResponse.recording);
       setSegmentSeconds(settingsResponse.recording.segmentSeconds);
       setRecordingStream(settingsResponse.recording.recordingStream);
@@ -65,17 +156,101 @@ export function DashboardPage() {
       if (activeCamera) {
         const stream = activeCamera.defaultStream;
         setSelectedStream(stream);
-        await startLiveForCamera(activeCamera.id, stream);
-        setRecordingStatus(await api.getRecordingStatus(activeCamera.id));
+        await Promise.all([
+          startLiveForCamera(activeCamera.id, stream),
+          refreshOperationalStatus(activeCamera.id),
+          loadPlaybackSegments(activeCamera.id, playbackDate)
+        ]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao carregar dashboard.");
     }
-  }, [startLiveForCamera]);
+  }, [loadPlaybackSegments, playbackDate, refreshOperationalStatus, startLiveForCamera]);
 
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  useEffect(() => {
+    if (camera) loadPlaybackSegments(camera.id, playbackDate).catch(() => undefined);
+  }, [camera, loadPlaybackSegments, playbackDate]);
+
+  function loadPlaybackSegment(segment: PlaybackSegment, offsetSeconds = 0, notice = "") {
+    setMode("playback");
+    setSelectedSegmentId(segment.id);
+    setPlaybackOffset(offsetSeconds);
+    setPlaybackSource(api.withToken(segment.url));
+    setPlaybackKey(`${segment.id}-${Date.now()}`);
+    setPlaybackCurrentSecond(secondsOfDay(segment.startedAt) + offsetSeconds);
+    setPlaybackNotice(notice);
+  }
+
+  async function seekPlayback(daySecond?: number) {
+    if (!camera || !playbackDate) return;
+    setIsBusy(true);
+    setError("");
+    setPlaybackNotice("");
+
+    const clock = typeof daySecond === "number" ? secondsToClock(daySecond) : playbackTime;
+    const normalizedClock = clock.length === 5 ? `${clock}:00` : clock;
+    const datetime = `${playbackDate}T${normalizedClock}`;
+
+    try {
+      const response = await api.seekPlayback(camera.id, datetime);
+      const targetSecond = typeof daySecond === "number" ? daySecond : secondsOfDay(datetime);
+      const startSecond = secondsOfDay(response.segment.startedAt);
+      const endSecond = segmentEndSeconds(response.segment);
+      const outsideSegment = targetSecond < startSecond || targetSecond > endSecond;
+      loadPlaybackSegment(
+        response.segment,
+        response.offsetSeconds,
+        outsideSegment ? "Sem gravacao neste intervalo. Abrindo o trecho mais proximo." : ""
+      );
+      setPlaybackTime(normalizedClock);
+      await loadPlaybackSegments(camera.id, playbackDate);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Nao foi possivel buscar a gravacao.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function playNextSegment() {
+    if (!selectedSegmentId) return;
+    const sorted = [...playbackSegments].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    const currentIndex = sorted.findIndex((segment) => segment.id === selectedSegmentId);
+    const current = sorted[currentIndex];
+    const next = sorted[currentIndex + 1];
+
+    if (!next || !current) {
+      setPlaybackNotice("Fim das gravacoes disponiveis neste dia.");
+      return;
+    }
+
+    const gap = secondsOfDay(next.startedAt) - segmentEndSeconds(current);
+    loadPlaybackSegment(
+      next,
+      0,
+      gap > 5 ? `Sem gravacao por ${formatDuration(gap)} antes do proximo trecho.` : ""
+    );
+  }
+
+  async function skipPlayback(deltaSeconds: number) {
+    const selected = playbackSegments.find((segment) => segment.id === selectedSegmentId);
+    const video = playbackVideoRef.current;
+    if (!selected || !video) return;
+
+    const nextOffset = Math.floor(video.currentTime + deltaSeconds);
+    const duration = selected.durationSeconds ?? video.duration ?? 0;
+    if (nextOffset >= 0 && nextOffset <= duration) {
+      video.currentTime = nextOffset;
+      setPlaybackCurrentSecond(secondsOfDay(selected.startedAt) + nextOffset);
+      return;
+    }
+
+    const targetSecond = secondsOfDay(selected.startedAt) + nextOffset;
+    await seekPlayback(Math.max(0, Math.min(daySeconds - 1, targetSecond)));
+  }
 
   async function changeLiveStream(stream: StreamKind) {
     if (!camera || stream === selectedStream) return;
@@ -91,9 +266,25 @@ export function DashboardPage() {
         ? await api.stopRecording(camera.id)
         : await api.startRecording(camera.id);
       setRecordingStatus(next);
-      setStatusMessage(next.isRunning ? "Gravação iniciada." : "Gravação parada.");
+      setWorkerStatus(await api.getWorkerStatus());
+      setStatusMessage(next.isRunning ? "Gravacao iniciada." : "Gravacao parada.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao alterar gravação.");
+      setError(err instanceof Error ? err.message : "Falha ao alterar gravacao.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function restartWorker() {
+    setIsBusy(true);
+    setError("");
+    try {
+      const status = await api.restartWorker();
+      setRecordingStatus(status);
+      setWorkerStatus(await api.getWorkerStatus());
+      setStatusMessage("Worker FFmpeg reiniciado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao reiniciar worker.");
     } finally {
       setIsBusy(false);
     }
@@ -109,13 +300,19 @@ export function DashboardPage() {
         autoRecordingEnabled
       });
       setSettings(response.recording);
-      if (camera) setRecordingStatus(await api.getRecordingStatus(camera.id));
-      setStatusMessage("Configuração de gravação salva.");
+      if (camera) await refreshOperationalStatus(camera.id);
+      setStatusMessage("Configuracao de gravacao salva.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao salvar configuração.");
+      setError(err instanceof Error ? err.message : "Falha ao salvar configuracao.");
     } finally {
       setIsBusy(false);
     }
+  }
+
+  async function returnToLive() {
+    setMode("live");
+    setPlaybackNotice("");
+    if (camera && !playlistUrl) await startLiveForCamera(camera.id, selectedStream);
   }
 
   const currentSegmentLabel = useMemo(() => {
@@ -124,12 +321,17 @@ export function DashboardPage() {
     return `${segmentSeconds}s`;
   }, [segmentSeconds]);
 
+  const recordedSeconds = useMemo(
+    () => playbackSegments.reduce((sum, segment) => sum + (segment.durationSeconds ?? 0), 0),
+    [playbackSegments]
+  );
+
   return (
     <main className="page-stack">
       <header className="page-header">
         <div>
-          <h1>Dashboard</h1>
-          <p>Live view local, controle de stream e gravação segmentada.</p>
+          <h1>DVR Dashboard</h1>
+          <p>Player principal com ao vivo, reproducao por horario e timeline do dia.</p>
         </div>
         <button className="secondary-button" onClick={loadInitialData} disabled={isBusy || isLiveLoading} type="button">
           <RefreshCw size={17} />
@@ -140,21 +342,26 @@ export function DashboardPage() {
       {error ? <div className="alert error">{error}</div> : null}
       {statusMessage ? <div className="alert success">{statusMessage}</div> : null}
 
-      <section className="status-grid">
+      <section className="status-grid dvr-status-grid">
         <div className="metric-panel">
-          <span className="metric-label">Câmera</span>
-          <strong>{camera?.name ?? "Sem câmera"}</strong>
-          <span>Live automática no painel</span>
+          <span className="metric-label">Camera</span>
+          <strong>{camera?.name ?? "Sem camera"}</strong>
+          <span>Live local via HLS</span>
         </div>
         <div className="metric-panel">
-          <span className="metric-label">Gravação</span>
+          <span className="metric-label">Gravacao</span>
           <strong>{recordingStatus?.isRunning ? "Ativa" : "Parada"}</strong>
           <span>{recordingStatus?.stream ?? recordingStream} · {currentSegmentLabel}</span>
         </div>
         <div className="metric-panel">
-          <span className="metric-label">Automática</span>
-          <strong>{settings?.autoRecordingEnabled ? "Ligada" : "Desligada"}</strong>
-          <span>Continua mesmo fora da tela</span>
+          <span className="metric-label">Storage</span>
+          <strong>{formatBytes(storageStatus?.totalUsedBytes)}</strong>
+          <span>Livre: {formatBytes(storageStatus?.recordings.freeSpaceBytes)}</span>
+        </div>
+        <div className="metric-panel">
+          <span className="metric-label">Worker</span>
+          <strong>{workerStatus?.running ? "Rodando" : "Parado"}</strong>
+          <span>{workerStatus?.pid ? `PID ${workerStatus.pid}` : "sem processo"}</span>
         </div>
       </section>
 
@@ -162,71 +369,197 @@ export function DashboardPage() {
         <div className="panel live-panel">
           <div className="panel-heading">
             <div>
-              <h2>Live view</h2>
-              <p>O player conecta automaticamente ao abrir o dashboard.</p>
+              <h2>Player principal</h2>
+              <p>{mode === "live" ? "Ao vivo ativo automaticamente." : "Reproducao de gravacoes segmentadas."}</p>
             </div>
-            <div className="segmented-control" aria-label="Selecionar stream">
-              {(["sub", "main"] as StreamKind[]).map((stream) => (
-                <button
-                  key={stream}
-                  className={selectedStream === stream ? "selected" : ""}
-                  onClick={() => changeLiveStream(stream)}
-                  disabled={isLiveLoading || !camera}
-                  type="button"
-                >
-                  {stream}
-                </button>
-              ))}
+            <div className="segmented-control" aria-label="Modo do player">
+              <button className={mode === "live" ? "selected" : ""} onClick={returnToLive} type="button">
+                Ao vivo
+              </button>
+              <button className={mode === "playback" ? "selected" : ""} onClick={() => setMode("playback")} type="button">
+                Reproducao
+              </button>
             </div>
           </div>
 
-          <HlsPlayer source={playlistUrl} label={`Live ${selectedStream}`} />
+          {mode === "live" ? (
+            <>
+              <div className="player-toolbar">
+                <span className="live-badge">LIVE</span>
+                <div className="segmented-control compact" aria-label="Selecionar stream">
+                  {(["sub", "main"] as StreamKind[]).map((stream) => (
+                    <button
+                      key={stream}
+                      className={selectedStream === stream ? "selected" : ""}
+                      onClick={() => changeLiveStream(stream)}
+                      disabled={isLiveLoading || !camera}
+                      type="button"
+                    >
+                      {stream}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <HlsPlayer source={playlistUrl} label={`Live ${selectedStream}`} />
+            </>
+          ) : (
+            <>
+              <video
+                key={playbackKey}
+                ref={playbackVideoRef}
+                className="recording-video"
+                src={playbackSource}
+                controls
+                autoPlay
+                onLoadedMetadata={() => {
+                  if (!playbackVideoRef.current) return;
+                  playbackVideoRef.current.currentTime = playbackOffset;
+                  playbackVideoRef.current.play().catch(() => undefined);
+                }}
+                onTimeUpdate={(event) => {
+                  const selected = playbackSegments.find((segment) => segment.id === selectedSegmentId);
+                  if (selected) {
+                    setPlaybackCurrentSecond(secondsOfDay(selected.startedAt) + Math.floor(event.currentTarget.currentTime));
+                  }
+                }}
+                onEnded={playNextSegment}
+              />
+              {!playbackSource ? <div className="empty-state embedded">Escolha uma data/hora ou clique na timeline.</div> : null}
+            </>
+          )}
+
+          <div className="playback-controls">
+            <label>
+              Data
+              <input type="date" value={playbackDate} onChange={(event) => setPlaybackDate(event.target.value)} />
+            </label>
+            <label>
+              Hora
+              <input
+                type="time"
+                step={1}
+                value={playbackTime}
+                onChange={(event) => setPlaybackTime(event.target.value)}
+              />
+            </label>
+            <button className="secondary-button" onClick={() => seekPlayback()} disabled={!camera || isBusy} type="button">
+              <Clock size={17} />
+              Ir para horario
+            </button>
+            <button className="secondary-button" onClick={() => skipPlayback(-10)} disabled={!playbackSource} type="button">
+              <SkipBack size={17} />
+              10s
+            </button>
+            <button className="secondary-button" onClick={() => skipPlayback(10)} disabled={!playbackSource} type="button">
+              <SkipForward size={17} />
+              10s
+            </button>
+            <button className="secondary-button" onClick={returnToLive} type="button">
+              <RotateCcw size={17} />
+              Voltar ao vivo
+            </button>
+          </div>
+
+          <DayTimeline
+            date={playbackDate}
+            segments={playbackSegments}
+            currentSecond={playbackCurrentSecond}
+            onSelect={(second) => {
+              setPlaybackTime(secondsToClock(second));
+              seekPlayback(second);
+            }}
+          />
+
+          {playbackNotice ? <div className="timeline-notice">{playbackNotice}</div> : null}
         </div>
 
         <div className="side-column">
           <section className="panel">
             <div className="panel-heading compact">
               <div>
-                <h2>Gravação</h2>
-                <p>Usa FFmpeg com `-rtsp_transport tcp`.</p>
+                <h2>Worker FFmpeg</h2>
+                <p>Status do processo de gravacao.</p>
               </div>
-              <Video size={20} />
+              <Activity size={20} />
             </div>
 
             <dl className="definition-list">
               <div>
-                <dt>Processo</dt>
-                <dd>{recordingStatus?.isRunning ? `PID ${recordingStatus.pid}` : "sem processo ativo"}</dd>
+                <dt>Status</dt>
+                <dd>{workerStatus?.running ? "rodando" : "parado"}</dd>
               </div>
               <div>
-                <dt>Pasta atual</dt>
-                <dd>{recordingStatus?.outputDir ?? "aguardando início"}</dd>
+                <dt>Uptime</dt>
+                <dd>{formatDuration(workerStatus?.uptimeSeconds)}</dd>
+              </div>
+              <div>
+                <dt>Ultimo segmento</dt>
+                <dd>{workerStatus?.lastSegmentAt ?? "sem segmento indexado"}</dd>
+              </div>
+              <div>
+                <dt>Reinicios</dt>
+                <dd>{workerStatus?.restartCount ?? 0}</dd>
               </div>
             </dl>
 
-            <button
-              className={recordingStatus?.isRunning ? "danger-button full" : "primary-button full"}
-              onClick={toggleRecording}
-              disabled={isBusy || !camera}
-              type="button"
-            >
-              {recordingStatus?.isRunning ? <CircleStop size={17} /> : <Play size={17} />}
-              {recordingStatus?.isRunning ? "Parar gravação" : "Iniciar gravação"}
-            </button>
+            <div className="button-stack">
+              <button
+                className={recordingStatus?.isRunning ? "danger-button full" : "primary-button full"}
+                onClick={toggleRecording}
+                disabled={isBusy || !camera}
+                type="button"
+              >
+                {recordingStatus?.isRunning ? <CircleStop size={17} /> : <Play size={17} />}
+                {recordingStatus?.isRunning ? "Parar gravacao" : "Iniciar gravacao"}
+              </button>
+              <button className="secondary-button full" onClick={restartWorker} disabled={isBusy || !camera} type="button">
+                <TimerReset size={17} />
+                Reiniciar worker
+              </button>
+            </div>
           </section>
 
           <section className="panel">
             <div className="panel-heading compact">
               <div>
-                <h2>Configuração</h2>
-                <p>Aplicada na gravação atual ao salvar.</p>
+                <h2>Storage</h2>
+                <p>Retencao e backup da Fase 2.</p>
+              </div>
+              <HardDrive size={20} />
+            </div>
+
+            <dl className="definition-list">
+              <div>
+                <dt>Gravado hoje</dt>
+                <dd>{formatDuration(recordedSeconds)} em {playbackSegments.length} trechos</dd>
+              </div>
+              <div>
+                <dt>Retencao</dt>
+                <dd>{storageStatus?.settings.retentionDays ?? settings?.retentionDays ?? 0} dias</dd>
+              </div>
+              <div>
+                <dt>Backup</dt>
+                <dd>{storageStatus?.settings.backupEnabled ? storageStatus.settings.backupSchedule : "manual/desligado"}</dd>
+              </div>
+              <div>
+                <dt>Pasta</dt>
+                <dd>{storageStatus?.settings.recordingsPath ?? "storage/recordings"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="panel">
+            <div className="panel-heading compact">
+              <div>
+                <h2>Configuracao rapida</h2>
+                <p>Aplicada no worker atual ao salvar.</p>
               </div>
               <Settings2 size={20} />
             </div>
 
             <div className="form-grid">
               <label>
-                Segmentação
+                Segmentacao
                 <select
                   value={segmentOptions.includes(segmentSeconds) ? segmentSeconds : "custom"}
                   onChange={(event) => {
@@ -253,11 +586,8 @@ export function DashboardPage() {
               </label>
 
               <label>
-                Stream de gravação
-                <select
-                  value={recordingStream}
-                  onChange={(event) => setRecordingStream(event.target.value as StreamKind)}
-                >
+                Stream de gravacao
+                <select value={recordingStream} onChange={(event) => setRecordingStream(event.target.value as StreamKind)}>
                   <option value="main">main</option>
                   <option value="sub">sub</option>
                 </select>
@@ -269,13 +599,13 @@ export function DashboardPage() {
                   checked={autoRecordingEnabled}
                   onChange={(event) => setAutoRecordingEnabled(event.target.checked)}
                 />
-                Gravação automática ao iniciar backend
+                Gravacao automatica no backend
               </label>
             </div>
 
             <button className="secondary-button full" onClick={saveRecordingSettings} disabled={isBusy} type="button">
               <Save size={17} />
-              Salvar configuração
+              Salvar configuracao
             </button>
           </section>
         </div>
