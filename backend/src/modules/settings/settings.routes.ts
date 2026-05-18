@@ -10,6 +10,7 @@ export const settingsRoutes = Router();
 const recordingSettingsSchema = z.object({
   segmentSeconds: z.number().int().min(10).max(86400),
   recordingStream: z.enum(["main", "sub"]),
+  defaultStream: z.enum(["main", "sub"]).optional(),
   autoRecordingEnabled: z.boolean().optional()
 });
 
@@ -26,10 +27,17 @@ settingsRoutes.post(
     const body = recordingSettingsSchema.parse(req.body);
     setSetting("segment_seconds", String(body.segmentSeconds));
     setSetting("recording_stream", body.recordingStream);
-    updateCameraStreams(1, { recordingStream: body.recordingStream });
+    updateCameraStreams(1, {
+      recordingStream: body.recordingStream,
+      defaultStream: body.defaultStream
+    });
 
     if (typeof body.autoRecordingEnabled === "boolean") {
       setSetting("auto_recording_enabled", String(body.autoRecordingEnabled));
+    }
+
+    if (body.defaultStream) {
+      setSetting("default_stream", body.defaultStream);
     }
 
     await recordingService.restartIfRunning(1);

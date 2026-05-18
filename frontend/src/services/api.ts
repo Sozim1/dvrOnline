@@ -175,7 +175,7 @@ export type SystemLog = {
   createdAt: string;
 };
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 const TOKEN_KEY = "camera_nvr_token";
 
 export function getStoredToken(): string | null {
@@ -263,6 +263,7 @@ export const api = {
   async updateRecordingSettings(values: {
     segmentSeconds: number;
     recordingStream: StreamKind;
+    defaultStream?: StreamKind;
     autoRecordingEnabled?: boolean;
   }) {
     return request<{ recording: RecordingSettings }>("/api/settings/recording", {

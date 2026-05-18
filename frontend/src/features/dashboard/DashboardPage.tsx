@@ -92,6 +92,7 @@ export function DashboardPage() {
   const [settings, setSettings] = useState<RecordingSettings | null>(null);
   const [segmentSeconds, setSegmentSeconds] = useState(300);
   const [recordingStream, setRecordingStream] = useState<StreamKind>("main");
+  const [defaultStream, setDefaultStream] = useState<StreamKind>("main");
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState(false);
   const [playbackDate, setPlaybackDate] = useState(todayInputValue());
   const [playbackTime, setPlaybackTime] = useState(timeInputValue());
@@ -151,10 +152,11 @@ export function DashboardPage() {
       setSettings(settingsResponse.recording);
       setSegmentSeconds(settingsResponse.recording.segmentSeconds);
       setRecordingStream(settingsResponse.recording.recordingStream);
+      setDefaultStream(settingsResponse.recording.defaultStream);
       setAutoRecordingEnabled(settingsResponse.recording.autoRecordingEnabled);
 
       if (activeCamera) {
-        const stream = activeCamera.defaultStream;
+        const stream = settingsResponse.recording.defaultStream ?? activeCamera.defaultStream;
         setSelectedStream(stream);
         await Promise.all([
           startLiveForCamera(activeCamera.id, stream),
@@ -297,6 +299,7 @@ export function DashboardPage() {
       const response = await api.updateRecordingSettings({
         segmentSeconds,
         recordingStream,
+        defaultStream,
         autoRecordingEnabled
       });
       setSettings(response.recording);
@@ -583,6 +586,14 @@ export function DashboardPage() {
                   value={segmentSeconds}
                   onChange={(event) => setSegmentSeconds(Number(event.target.value))}
                 />
+              </label>
+
+              <label>
+                Qualidade live padrao
+                <select value={defaultStream} onChange={(event) => setDefaultStream(event.target.value as StreamKind)}>
+                  <option value="main">main - melhor imagem</option>
+                  <option value="sub">sub - mais leve</option>
+                </select>
               </label>
 
               <label>

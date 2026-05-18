@@ -61,5 +61,6 @@ export const env = {
   ffmpegPath: process.env.FFMPEG_PATH ?? "ffmpeg",
   ffprobePath: process.env.FFPROBE_PATH ?? "ffprobe",
   hlsSegmentSeconds: numberFromEnv("HLS_SEGMENT_SECONDS", 2),
-  hlsTranscode: boolFromEnv("HLS_TRANSCODE", false)
+  hlsTranscode: boolFromEnv("HLS_TRANSCODE", false),
+  hlsTranscodeCrf: numberFromEnv("HLS_TRANSCODE_CRF", 18)
 };

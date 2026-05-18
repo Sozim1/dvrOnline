@@ -47,7 +47,18 @@ class LiveStreamService {
     const playlistPath = path.join(directory, "index.m3u8");
     const segmentPattern = path.join(directory, "segment-%03d.ts");
     const codecArgs = env.hlsTranscode
-      ? ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p"]
+      ? [
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-tune",
+          "zerolatency",
+          "-crf",
+          String(env.hlsTranscodeCrf),
+          "-pix_fmt",
+          "yuv420p"
+        ]
       : ["-c:v", "copy"];
 
     const args = [
