@@ -17,7 +17,7 @@ Esta branch implementa a **Fase 2**:
 - Status e reinicio manual do worker FFmpeg.
 - Restart automatico do FFmpeg com limite de tentativas.
 
-Motion zones, eventos de movimento, Telegram/e-mail e WebSocket ficam para Fase 3/Fase 4.
+Motion zones, eventos de movimento e WebSocket ficam para Fase 3/Fase 4.
 
 ## Estrutura
 
@@ -89,6 +89,7 @@ RECORDING_STREAM=main
 SEGMENT_SECONDS=300
 AUTO_RECORDING_ENABLED=true
 TZ=America/Sao_Paulo
+PUBLIC_API_URL=http://localhost:4000
 ```
 
 Nao coloque a senha real da camera no codigo. Ela fica apenas no `.env` e no SQLite local criado pelo backend.
@@ -138,6 +139,39 @@ services:
 ```
 
 Dentro do painel, use caminhos que existam dentro do container, por exemplo `/app/storage/recordings`. Se apontar para uma pasta aleatoria do host sem volume montado, o backend nao tera acesso.
+
+## Acesso externo por IP ou dominio
+
+Para usar o notebook como DVR 24 horas e acessar de outro PC ou celular, o frontend precisa apontar para o endereco publico do backend. Configure no `.env`:
+
+```env
+FRONTEND_ORIGIN=http://localhost:3000,http://SEU_IP_PUBLICO:3000
+PUBLIC_API_URL=http://SEU_IP_PUBLICO:4000
+```
+
+Se usar dominio:
+
+```env
+FRONTEND_ORIGIN=http://localhost:3000,http://dvr.seudominio.com:3000
+PUBLIC_API_URL=http://dvr.seudominio.com:4000
+```
+
+Depois de alterar `PUBLIC_API_URL`, reconstrua o frontend porque o Vite grava esse valor no build:
+
+```powershell
+docker compose up --build -d
+```
+
+No roteador, aponte as portas para o IP local do notebook:
+
+```txt
+porta externa 3000 -> IP_DO_NOTEBOOK:3000
+porta externa 4000 -> IP_DO_NOTEBOOK:4000
+```
+
+Tambem libere essas portas no firewall do Windows. Nao exponha a porta RTSP `554` da camera na internet; exponha somente o painel/API do DVR.
+
+Se o IP publico da sua internet muda, use DDNS ou um dominio com atualizacao automatica. Para internet aberta, use senha forte no painel e `JWT_SECRET` longo no `.env`. O ideal em producao e colocar HTTPS/reverse proxy na frente, mas a configuracao acima ja deixa o acesso por IP externo funcional.
 
 ## Rodar local em desenvolvimento
 
@@ -355,13 +389,12 @@ Na Fase 2, `recordings` ganhou campos de status, backup e exclusao logica para p
 - Senha do painel salva com hash bcrypt.
 - RTSP nao aparece no frontend.
 - `.env` fica ignorado pelo Git.
-- Por padrao, exponha isso so na rede local.
-- Para acesso externo, use VPN/Tailscale/WireGuard em vez de abrir portas publicas.
+- Para acesso externo direto, configure `PUBLIC_API_URL`, `FRONTEND_ORIGIN`, redirecionamento de portas no roteador e firewall do notebook.
+- Nao exponha RTSP/porta `554` da camera diretamente na internet.
 
 ## Limitacoes conhecidas
 
 - Motion detection ainda nao foi implementado.
 - Eventos de movimento e snapshots entram na Fase 3.
-- Telegram/e-mail/webhook entram na Fase 4.
 - Backup compactado `.zip` esta reservado como configuracao futura.
 - Alterar path no Docker exige volume montado; o painel valida escrita, mas nao consegue montar disco do host sozinho.
