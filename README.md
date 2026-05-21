@@ -328,6 +328,18 @@ Quanto menor o `CRF`, melhor a imagem e maior o uso de CPU. Valores praticos:
 23 = mais leve, qualidade menor
 ```
 
+Se a live ficar travando depois de muitas horas, estes parametros controlam estabilidade e recuperacao:
+
+```env
+HLS_SEGMENT_SECONDS=2
+HLS_LIST_SIZE=8
+HLS_STALE_SECONDS=30
+HLS_START_TIMEOUT_SECONDS=25
+HLS_RTSP_TIMEOUT_MICROSECONDS=15000000
+```
+
+O backend considera a live travada quando a playlist HLS fica sem atualizar por `HLS_STALE_SECONDS`. O player tambem tenta recuperar buffer travado e, se nao voltar, pede para o backend reiniciar o FFmpeg da live.
+
 ## Tela de gravacoes
 
 Entre em `/recordings`.

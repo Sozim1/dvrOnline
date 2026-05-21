@@ -60,6 +60,11 @@ export type LiveStatus = {
   isRunning: boolean;
   startedAt?: string;
   playlistPath: string;
+  stale?: boolean;
+  lastPlaylistAt?: string | null;
+  pid?: number | null;
+  restartCount?: number;
+  lastError?: string | null;
 };
 
 export type Recording = {
@@ -284,6 +289,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ stream })
     });
+  },
+
+  async restartLive(cameraId: number, stream: StreamKind) {
+    return request<LiveStatus>(`/api/live/${cameraId}/restart`, {
+      method: "POST",
+      body: JSON.stringify({ stream })
+    });
+  },
+
+  async getLiveStatus(cameraId: number, stream: StreamKind) {
+    return request<LiveStatus>(`/api/live/${cameraId}/${stream}/status`);
   },
 
   async getRecordingStatus(cameraId: number) {
