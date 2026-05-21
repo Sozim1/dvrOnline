@@ -60,6 +60,11 @@ export type LiveStatus = {
   isRunning: boolean;
   startedAt?: string;
   playlistPath: string;
+  stale?: boolean;
+  lastPlaylistAt?: string | null;
+  pid?: number | null;
+  restartCount?: number;
+  lastError?: string | null;
 };
 
 export type Recording = {
@@ -175,7 +180,7 @@ export type SystemLog = {
   createdAt: string;
 };
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 const TOKEN_KEY = "camera_nvr_token";
 
 export function getStoredToken(): string | null {
@@ -263,6 +268,7 @@ export const api = {
   async updateRecordingSettings(values: {
     segmentSeconds: number;
     recordingStream: StreamKind;
+    defaultStream?: StreamKind;
     autoRecordingEnabled?: boolean;
   }) {
     return request<{ recording: RecordingSettings }>("/api/settings/recording", {
@@ -283,6 +289,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ stream })
     });
+  },
+
+  async restartLive(cameraId: number, stream: StreamKind) {
+    return request<LiveStatus>(`/api/live/${cameraId}/restart`, {
+      method: "POST",
+      body: JSON.stringify({ stream })
+    });
+  },
+
+  async getLiveStatus(cameraId: number, stream: StreamKind) {
+    return request<LiveStatus>(`/api/live/${cameraId}/${stream}/status`);
   },
 
   async getRecordingStatus(cameraId: number) {

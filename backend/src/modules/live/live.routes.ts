@@ -29,6 +29,15 @@ liveRoutes.post(
   })
 );
 
+liveRoutes.post(
+  "/live/:cameraId/restart",
+  asyncHandler(async (req, res) => {
+    const cameraId = Number(req.params.cameraId);
+    const body = startLiveSchema.parse(req.body ?? {});
+    res.json(await liveStreamService.restart(cameraId, body.stream));
+  })
+);
+
 liveRoutes.get(
   "/live/:cameraId/:stream/status",
   asyncHandler(async (req, res) => {

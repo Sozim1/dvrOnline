@@ -17,7 +17,7 @@ Esta branch implementa a **Fase 2**:
 - Status e reinicio manual do worker FFmpeg.
 - Restart automatico do FFmpeg com limite de tentativas.
 
-Motion zones, eventos de movimento, Telegram/e-mail e WebSocket ficam para Fase 3/Fase 4.
+Motion zones, eventos de movimento e WebSocket ficam para Fase 3/Fase 4.
 
 ## Estrutura
 
@@ -84,7 +84,7 @@ CAMERA_NAME=Camera Sala
 RTSP_MAIN=rtsp://admin:CODIGO@192.168.0.50:554/ch1/main
 RTSP_SUB=rtsp://admin:CODIGO@192.168.0.50:554/ch1/sub
 
-DEFAULT_STREAM=sub
+DEFAULT_STREAM=main
 RECORDING_STREAM=main
 SEGMENT_SECONDS=300
 AUTO_RECORDING_ENABLED=true
@@ -116,10 +116,10 @@ Acesse:
 
 ```txt
 Frontend: http://localhost:3000
-Backend:  http://localhost:4000/health
+Backend:  http://localhost:3000/health
 ```
 
-O backend do Docker ja instala FFmpeg.
+O backend do Docker ja instala FFmpeg. No Docker, o frontend Nginx encaminha `/api` e `/health` para o backend dentro da rede do Compose. Por padrao, voce precisa expor externamente apenas a porta `3000`.
 
 Volume padrao:
 
@@ -138,6 +138,95 @@ services:
 ```
 
 Dentro do painel, use caminhos que existam dentro do container, por exemplo `/app/storage/recordings`. Se apontar para uma pasta aleatoria do host sem volume montado, o backend nao tera acesso.
+
+## Notebook 24h e acesso externo
+
+Para usar o notebook como DVR 24 horas, deixe o Docker subindo o sistema e exponha o painel pelo IP do notebook.
+
+Configuracao recomendada no `.env`:
+
+```env
+BACKEND_BIND=127.0.0.1
+FRONTEND_ORIGIN=http://localhost:3000
+PUBLIC_API_URL=
+```
+
+Com essa configuracao, o celular/PC acessa:
+
+```txt
+http://IP_DO_NOTEBOOK:3000
+```
+
+No roteador, aponte somente a porta do painel para o IP local do notebook:
+
+```txt
+porta externa 3000 -> IP_DO_NOTEBOOK:3000
+```
+
+Tambem libere a porta `3000` no firewall do Windows. Como administrador:
+
+```powershell
+.\scripts\open-dvr-firewall.ps1
+```
+
+Nao exponha a porta RTSP `554` da camera na internet.
+
+Se voce quiser usar uma porta externa diferente, por exemplo `8080`, configure o roteador assim:
+
+```txt
+porta externa 8080 -> IP_DO_NOTEBOOK:3000
+```
+
+Acesse:
+
+```txt
+http://SEU_IP_PUBLICO:8080
+```
+
+Para iniciar o DVR manualmente no notebook:
+
+```powershell
+.\scripts\start-dvr.ps1
+```
+
+Para instalar inicializacao automatica ao entrar no Windows:
+
+```powershell
+.\scripts\install-dvr-startup-task.ps1
+```
+
+Para remover a tarefa depois:
+
+```powershell
+.\scripts\uninstall-dvr-startup-task.ps1
+```
+
+Se o IP publico da internet muda, use DDNS ou um dominio com atualizacao automatica.
+
+### Modo direto com API exposta
+
+O modo recomendado acima expoe so o painel. Se voce realmente quiser expor a API separada, configure:
+
+```env
+BACKEND_BIND=0.0.0.0
+FRONTEND_ORIGIN=http://localhost:3000,http://SEU_IP_PUBLICO:3000
+PUBLIC_API_URL=http://SEU_IP_PUBLICO:4000
+```
+
+Depois de alterar `PUBLIC_API_URL`, reconstrua o frontend porque o Vite grava esse valor no build:
+
+```powershell
+docker compose up --build -d
+```
+
+No roteador, aponte as portas para o IP local do notebook:
+
+```txt
+porta externa 3000 -> IP_DO_NOTEBOOK:3000
+porta externa 4000 -> IP_DO_NOTEBOOK:4000
+```
+
+Para internet aberta, use senha forte no painel e `JWT_SECRET` longo no `.env`. O ideal em producao e colocar HTTPS/reverse proxy na frente, mas o modo recomendado com apenas a porta `3000` ja deixa o acesso por IP externo mais simples.
 
 ## Rodar local em desenvolvimento
 
@@ -171,6 +260,13 @@ O player principal tem dois modos:
 
 - `Ao vivo`: abre o HLS automaticamente, sem botao de iniciar live.
 - `Reproducao`: toca gravacoes antigas no mesmo player.
+
+Qualidade:
+
+- `main` usa a melhor imagem da camera.
+- `sub` e mais leve, mas a imagem e pior.
+- A gravacao deve ficar em `main`.
+- Se a live parecer ruim, selecione `main` no player e salve `Qualidade live padrao` como `main` na configuracao rapida.
 
 No modo reproducao:
 
@@ -206,6 +302,45 @@ storage/recordings/camera-sala/2026-05-17/14-05-00.mp4
 ```
 
 O scanner indexa MP4 no SQLite a cada 15 segundos. Arquivos recentes/em gravacao sao marcados para nao entrarem em backup ou retencao.
+
+## Live view e qualidade HLS
+
+O navegador nao acessa RTSP direto. O backend cria HLS temporario em:
+
+```txt
+storage/hls/
+```
+
+O frontend consome playlists protegidas por JWT. O RTSP e a senha da camera nao sao enviados ao navegador.
+
+Por padrao, o HLS usa `-c:v copy`, ou seja, nao recomprime o video. Se a camera/codec exigir transcodificacao, ligue:
+
+```env
+HLS_TRANSCODE=true
+HLS_TRANSCODE_CRF=18
+```
+
+Quanto menor o `CRF`, melhor a imagem e maior o uso de CPU. Valores praticos:
+
+```txt
+18 = melhor qualidade
+20 = bom equilibrio
+23 = mais leve, qualidade menor
+```
+
+Se a live ficar travando depois de muitas horas, estes parametros controlam estabilidade e recuperacao:
+
+```env
+HLS_SEGMENT_SECONDS=2
+HLS_LIST_SIZE=8
+HLS_STALE_SECONDS=30
+HLS_START_TIMEOUT_SECONDS=25
+HLS_RTSP_TIMEOUT_MICROSECONDS=0
+```
+
+O backend considera a live travada quando a playlist HLS fica sem atualizar por `HLS_STALE_SECONDS`. O player tambem tenta recuperar buffer travado e, se nao voltar, pede para o backend reiniciar o FFmpeg da live.
+
+Mantenha `HLS_RTSP_TIMEOUT_MICROSECONDS=0` se o FFmpeg do servidor encerrar antes de criar o HLS. Alguns builds de FFmpeg nao aceitam `-rw_timeout` no RTSP.
 
 ## Tela de gravacoes
 
@@ -355,13 +490,12 @@ Na Fase 2, `recordings` ganhou campos de status, backup e exclusao logica para p
 - Senha do painel salva com hash bcrypt.
 - RTSP nao aparece no frontend.
 - `.env` fica ignorado pelo Git.
-- Por padrao, exponha isso so na rede local.
-- Para acesso externo, use VPN/Tailscale/WireGuard em vez de abrir portas publicas.
+- Para acesso externo direto, prefira expor somente a porta `3000`; o Nginx encaminha `/api` para o backend internamente.
+- Nao exponha RTSP/porta `554` da camera diretamente na internet.
 
 ## Limitacoes conhecidas
 
 - Motion detection ainda nao foi implementado.
 - Eventos de movimento e snapshots entram na Fase 3.
-- Telegram/e-mail/webhook entram na Fase 4.
 - Backup compactado `.zip` esta reservado como configuracao futura.
 - Alterar path no Docker exige volume montado; o painel valida escrita, mas nao consegue montar disco do host sozinho.

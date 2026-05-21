@@ -82,6 +82,7 @@ function formatDuration(seconds?: number | null): string {
 
 export function DashboardPage() {
   const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
+  const liveReconnectTimer = useRef<number | null>(null);
   const [mode, setMode] = useState<"live" | "playback">("live");
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedStream, setSelectedStream] = useState<StreamKind>("sub");
@@ -92,6 +93,7 @@ export function DashboardPage() {
   const [settings, setSettings] = useState<RecordingSettings | null>(null);
   const [segmentSeconds, setSegmentSeconds] = useState(300);
   const [recordingStream, setRecordingStream] = useState<StreamKind>("main");
+  const [defaultStream, setDefaultStream] = useState<StreamKind>("main");
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState(false);
   const [playbackDate, setPlaybackDate] = useState(todayInputValue());
   const [playbackTime, setPlaybackTime] = useState(timeInputValue());
@@ -114,11 +116,13 @@ export function DashboardPage() {
   }, []);
 
   const startLiveForCamera = useCallback(
-    async (cameraId: number, stream: StreamKind, showMessage = false) => {
+    async (cameraId: number, stream: StreamKind, showMessage = false, forceRestart = false) => {
       setIsLiveLoading(true);
       setError("");
       try {
-        const liveStatus = await api.startLive(cameraId, stream);
+        const liveStatus = forceRestart
+          ? await api.restartLive(cameraId, stream)
+          : await api.startLive(cameraId, stream);
         setPlaylistUrl(withCacheBust(api.withToken(liveStatus.playlistPath)));
         setSelectedStream(stream);
         if (showMessage) setStatusMessage(`Live ${stream} reconectada.`);
@@ -151,10 +155,11 @@ export function DashboardPage() {
       setSettings(settingsResponse.recording);
       setSegmentSeconds(settingsResponse.recording.segmentSeconds);
       setRecordingStream(settingsResponse.recording.recordingStream);
+      setDefaultStream(settingsResponse.recording.defaultStream);
       setAutoRecordingEnabled(settingsResponse.recording.autoRecordingEnabled);
 
       if (activeCamera) {
-        const stream = activeCamera.defaultStream;
+        const stream = settingsResponse.recording.defaultStream ?? activeCamera.defaultStream;
         setSelectedStream(stream);
         await Promise.all([
           startLiveForCamera(activeCamera.id, stream),
@@ -170,6 +175,12 @@ export function DashboardPage() {
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  useEffect(() => {
+    return () => {
+      if (liveReconnectTimer.current) window.clearTimeout(liveReconnectTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (camera) loadPlaybackSegments(camera.id, playbackDate).catch(() => undefined);
@@ -257,6 +268,15 @@ export function DashboardPage() {
     await startLiveForCamera(camera.id, stream, true);
   }
 
+  function reconnectLive(reason = "Player HLS solicitou reconexao.") {
+    if (!camera || liveReconnectTimer.current) return;
+    setStatusMessage(`${reason} Reiniciando live...`);
+    liveReconnectTimer.current = window.setTimeout(() => {
+      liveReconnectTimer.current = null;
+      startLiveForCamera(camera.id, selectedStream, true, true);
+    }, 1500);
+  }
+
   async function toggleRecording() {
     if (!camera) return;
     setIsBusy(true);
@@ -297,6 +317,7 @@ export function DashboardPage() {
       const response = await api.updateRecordingSettings({
         segmentSeconds,
         recordingStream,
+        defaultStream,
         autoRecordingEnabled
       });
       setSettings(response.recording);
@@ -399,8 +420,21 @@ export function DashboardPage() {
                     </button>
                   ))}
                 </div>
+                <button
+                  className="secondary-button"
+                  onClick={() => reconnectLive("Reconexao manual.")}
+                  disabled={isLiveLoading || !camera}
+                  type="button"
+                >
+                  <RefreshCw size={17} />
+                  Reconectar
+                </button>
               </div>
-              <HlsPlayer source={playlistUrl} label={`Live ${selectedStream}`} />
+              <HlsPlayer
+                source={playlistUrl}
+                label={`Live ${selectedStream}`}
+                onFatalError={(reason) => reconnectLive(reason)}
+              />
             </>
           ) : (
             <>
@@ -583,6 +617,14 @@ export function DashboardPage() {
                   value={segmentSeconds}
                   onChange={(event) => setSegmentSeconds(Number(event.target.value))}
                 />
+              </label>
+
+              <label>
+                Qualidade live padrao
+                <select value={defaultStream} onChange={(event) => setDefaultStream(event.target.value as StreamKind)}>
+                  <option value="main">main - melhor imagem</option>
+                  <option value="sub">sub - mais leve</option>
+                </select>
               </label>
 
               <label>
