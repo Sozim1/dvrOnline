@@ -312,9 +312,8 @@ O scanner indexa MP4 no SQLite a cada 15 segundos. Arquivos recentes/em gravacao
 O navegador nao acessa RTSP direto. Para baixa latencia, o sistema usa MediaMTX para converter RTSP em WebRTC. A URL interna fica sob:
 
 ```txt
-/webrtc/camera-main
-/webrtc/camera_main
-/webrtc/camera_sub
+/webrtc/main
+/webrtc/sub
 ```
 
 Para WebRTC funcionar fora do proprio container, configure:
