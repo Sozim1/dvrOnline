@@ -159,7 +159,7 @@ class LiveStreamService {
       "-hls_list_size",
       String(env.hlsListSize),
       "-hls_delete_threshold",
-      "4",
+      "2",
       "-hls_flags",
       "delete_segments+omit_endlist+program_date_time",
       "-hls_segment_filename",
