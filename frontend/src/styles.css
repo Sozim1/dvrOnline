@@ -447,6 +447,14 @@ select:focus {
   background: #0c0d10;
 }
 
+.webrtc-player-frame iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: #0c0d10;
+}
+
 .player-placeholder {
   position: absolute;
   inset: 0;

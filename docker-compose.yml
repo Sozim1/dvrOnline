@@ -31,6 +31,24 @@ services:
     networks:
       - camera-nvr
 
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    container_name: camera-nvr-mediamtx
+    env_file:
+      - .env
+    environment:
+      MTX_RTSPTRANSPORTS: tcp
+      MTX_WEBRTCADDITIONALHOSTS: "${WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}"
+      MTX_PATHS_CAMERA_MAIN_SOURCE: "${RTSP_MAIN}"
+      MTX_PATHS_CAMERA_SUB_SOURCE: "${RTSP_SUB}"
+      MTX_PATHS_CAMERA_MAIN_SOURCEONDEMAND: "no"
+      MTX_PATHS_CAMERA_SUB_SOURCEONDEMAND: "no"
+    ports:
+      - "${WEBRTC_UDP_PORT:-8189}:8189/udp"
+    restart: unless-stopped
+    networks:
+      - camera-nvr
+
 networks:
   camera-nvr:
     driver: bridge

@@ -1,8 +1,8 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [string]$TaskName = "CameraNvrDvrStartup"
 )
+
+$ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $startScript = Resolve-Path (Join-Path $PSScriptRoot "start-dvr.ps1")

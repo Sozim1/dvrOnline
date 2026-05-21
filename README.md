@@ -121,6 +121,8 @@ Backend:  http://localhost:3000/health
 
 O backend do Docker ja instala FFmpeg. No Docker, o frontend Nginx encaminha `/api` e `/health` para o backend dentro da rede do Compose. Por padrao, voce precisa expor externamente apenas a porta `3000`.
 
+O ao vivo usa WebRTC via MediaMTX por padrao. O HLS continua disponivel como fallback no dashboard.
+
 Volume padrao:
 
 ```yaml
@@ -149,6 +151,8 @@ Configuracao recomendada no `.env`:
 BACKEND_BIND=127.0.0.1
 FRONTEND_ORIGIN=http://localhost:3000
 PUBLIC_API_URL=
+WEBRTC_ADDITIONAL_HOSTS=IP_DO_NOTEBOOK
+WEBRTC_UDP_PORT=8189
 ```
 
 Com essa configuracao, o celular/PC acessa:
@@ -163,7 +167,7 @@ No roteador, aponte somente a porta do painel para o IP local do notebook:
 porta externa 3000 -> IP_DO_NOTEBOOK:3000
 ```
 
-Tambem libere a porta `3000` no firewall do Windows. Como administrador:
+Tambem libere a porta `3000` TCP e a porta `8189` UDP no firewall. No Windows, como administrador:
 
 ```powershell
 .\scripts\open-dvr-firewall.ps1
@@ -305,7 +309,27 @@ O scanner indexa MP4 no SQLite a cada 15 segundos. Arquivos recentes/em gravacao
 
 ## Live view e qualidade HLS
 
-O navegador nao acessa RTSP direto. O backend cria HLS temporario em:
+O navegador nao acessa RTSP direto. Para baixa latencia, o sistema usa MediaMTX para converter RTSP em WebRTC. A URL interna fica sob:
+
+```txt
+/webrtc/camera-main
+/webrtc/camera-sub
+```
+
+Para WebRTC funcionar fora do proprio container, configure:
+
+```env
+WEBRTC_ADDITIONAL_HOSTS=IP_DO_SERVIDOR
+WEBRTC_UDP_PORT=8189
+```
+
+No Linux, libere a porta UDP se usar firewall:
+
+```bash
+sudo ufw allow 8189/udp
+```
+
+HLS fica como fallback. O backend cria HLS temporario em:
 
 ```txt
 storage/hls/

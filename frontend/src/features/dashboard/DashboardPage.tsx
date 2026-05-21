@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { DayTimeline } from "../../components/DayTimeline";
 import { HlsPlayer } from "../../components/HlsPlayer";
+import { WebRtcPlayer } from "../../components/WebRtcPlayer";
 import {
   api,
   type Camera,
@@ -84,6 +85,8 @@ export function DashboardPage() {
   const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const liveReconnectTimer = useRef<number | null>(null);
   const [mode, setMode] = useState<"live" | "playback">("live");
+  const [liveProtocol, setLiveProtocol] = useState<"webrtc" | "hls">("webrtc");
+  const [webRtcReloadKey, setWebRtcReloadKey] = useState(0);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedStream, setSelectedStream] = useState<StreamKind>("sub");
   const [playlistUrl, setPlaylistUrl] = useState("");
@@ -162,7 +165,7 @@ export function DashboardPage() {
         const stream = settingsResponse.recording.defaultStream ?? activeCamera.defaultStream;
         setSelectedStream(stream);
         await Promise.all([
-          startLiveForCamera(activeCamera.id, stream),
+          liveProtocol === "hls" ? startLiveForCamera(activeCamera.id, stream) : Promise.resolve(),
           refreshOperationalStatus(activeCamera.id),
           loadPlaybackSegments(activeCamera.id, playbackDate)
         ]);
@@ -170,7 +173,7 @@ export function DashboardPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao carregar dashboard.");
     }
-  }, [loadPlaybackSegments, playbackDate, refreshOperationalStatus, startLiveForCamera]);
+  }, [liveProtocol, loadPlaybackSegments, playbackDate, refreshOperationalStatus, startLiveForCamera]);
 
   useEffect(() => {
     loadInitialData();
@@ -265,16 +268,36 @@ export function DashboardPage() {
 
   async function changeLiveStream(stream: StreamKind) {
     if (!camera || stream === selectedStream) return;
-    await startLiveForCamera(camera.id, stream, true);
+    if (liveProtocol === "hls") {
+      await startLiveForCamera(camera.id, stream, true);
+      return;
+    }
+    setSelectedStream(stream);
+    setWebRtcReloadKey((current) => current + 1);
   }
 
-  function reconnectLive(reason = "Player HLS solicitou reconexao.") {
+  function reconnectLive(reason = "Player solicitou reconexao.") {
     if (!camera || liveReconnectTimer.current) return;
+    if (liveProtocol === "webrtc") {
+      setStatusMessage(`${reason} Reconectando WebRTC...`);
+      setWebRtcReloadKey((current) => current + 1);
+      return;
+    }
     setStatusMessage(`${reason} Reiniciando live...`);
     liveReconnectTimer.current = window.setTimeout(() => {
       liveReconnectTimer.current = null;
       startLiveForCamera(camera.id, selectedStream, true, true);
     }, 1500);
+  }
+
+  async function changeLiveProtocol(protocol: "webrtc" | "hls") {
+    setLiveProtocol(protocol);
+    if (protocol === "hls" && camera) {
+      await startLiveForCamera(camera.id, selectedStream, true);
+      return;
+    }
+    setStatusMessage("Live WebRTC ativa.");
+    setWebRtcReloadKey((current) => current + 1);
   }
 
   async function toggleRecording() {
@@ -367,7 +390,7 @@ export function DashboardPage() {
         <div className="metric-panel">
           <span className="metric-label">Camera</span>
           <strong>{camera?.name ?? "Sem camera"}</strong>
-          <span>Live local via HLS</span>
+          <span>Live local via {liveProtocol === "webrtc" ? "WebRTC" : "HLS"}</span>
         </div>
         <div className="metric-panel">
           <span className="metric-label">Gravacao</span>
@@ -407,6 +430,24 @@ export function DashboardPage() {
             <>
               <div className="player-toolbar">
                 <span className="live-badge">LIVE</span>
+                <div className="segmented-control compact" aria-label="Protocolo live">
+                  <button
+                    className={liveProtocol === "webrtc" ? "selected" : ""}
+                    onClick={() => changeLiveProtocol("webrtc")}
+                    disabled={isLiveLoading}
+                    type="button"
+                  >
+                    WebRTC
+                  </button>
+                  <button
+                    className={liveProtocol === "hls" ? "selected" : ""}
+                    onClick={() => changeLiveProtocol("hls")}
+                    disabled={isLiveLoading}
+                    type="button"
+                  >
+                    HLS
+                  </button>
+                </div>
                 <div className="segmented-control compact" aria-label="Selecionar stream">
                   {(["sub", "main"] as StreamKind[]).map((stream) => (
                     <button
@@ -430,11 +471,15 @@ export function DashboardPage() {
                   Reconectar
                 </button>
               </div>
-              <HlsPlayer
-                source={playlistUrl}
-                label={`Live ${selectedStream}`}
-                onFatalError={(reason) => reconnectLive(reason)}
-              />
+              {liveProtocol === "webrtc" ? (
+                <WebRtcPlayer stream={selectedStream} reloadKey={webRtcReloadKey} />
+              ) : (
+                <HlsPlayer
+                  source={playlistUrl}
+                  label={`Live ${selectedStream}`}
+                  onFatalError={(reason) => reconnectLive(reason)}
+                />
+              )}
             </>
           ) : (
             <>
