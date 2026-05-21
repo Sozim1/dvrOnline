@@ -335,10 +335,12 @@ HLS_SEGMENT_SECONDS=2
 HLS_LIST_SIZE=8
 HLS_STALE_SECONDS=30
 HLS_START_TIMEOUT_SECONDS=25
-HLS_RTSP_TIMEOUT_MICROSECONDS=15000000
+HLS_RTSP_TIMEOUT_MICROSECONDS=0
 ```
 
 O backend considera a live travada quando a playlist HLS fica sem atualizar por `HLS_STALE_SECONDS`. O player tambem tenta recuperar buffer travado e, se nao voltar, pede para o backend reiniciar o FFmpeg da live.
+
+Mantenha `HLS_RTSP_TIMEOUT_MICROSECONDS=0` se o FFmpeg do servidor encerrar antes de criar o HLS. Alguns builds de FFmpeg nao aceitam `-rw_timeout` no RTSP.
 
 ## Tela de gravacoes
 

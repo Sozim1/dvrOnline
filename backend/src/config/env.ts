@@ -64,7 +64,7 @@ export const env = {
   hlsListSize: numberFromEnv("HLS_LIST_SIZE", 8),
   hlsStaleSeconds: numberFromEnv("HLS_STALE_SECONDS", 30),
   hlsStartTimeoutSeconds: numberFromEnv("HLS_START_TIMEOUT_SECONDS", 25),
-  hlsRtspTimeoutMicroseconds: numberFromEnv("HLS_RTSP_TIMEOUT_MICROSECONDS", 15_000_000),
+  hlsRtspTimeoutMicroseconds: numberFromEnv("HLS_RTSP_TIMEOUT_MICROSECONDS", 0),
   hlsTranscode: boolFromEnv("HLS_TRANSCODE", false),
   hlsTranscodeCrf: numberFromEnv("HLS_TRANSCODE_CRF", 18)
 };

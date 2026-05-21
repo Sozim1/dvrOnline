@@ -137,6 +137,9 @@ class LiveStreamService {
           "yuv420p"
         ]
       : ["-c:v", "copy"];
+    const timeoutArgs = env.hlsRtspTimeoutMicroseconds > 0
+      ? ["-rw_timeout", String(env.hlsRtspTimeoutMicroseconds)]
+      : [];
 
     const args = [
       "-hide_banner",
@@ -144,8 +147,7 @@ class LiveStreamService {
       "warning",
       "-rtsp_transport",
       "tcp",
-      "-rw_timeout",
-      String(env.hlsRtspTimeoutMicroseconds),
+      ...timeoutArgs,
       "-i",
       rtspUrl,
       "-an",
@@ -242,7 +244,13 @@ class LiveStreamService {
 
     while (Date.now() - startedAt < timeoutMs) {
       if (!this.isProcessRunning(state.process)) {
-        throw new HttpError(502, "FFmpeg encerrou antes de criar a live HLS.");
+        const error = this.lastError.get(this.key(state.cameraId, state.stream));
+        throw new HttpError(
+          502,
+          error
+            ? `FFmpeg encerrou antes de criar a live HLS: ${error}`
+            : "FFmpeg encerrou antes de criar a live HLS."
+        );
       }
 
       if (this.playlistHasSegments(state.playlistPath)) {
