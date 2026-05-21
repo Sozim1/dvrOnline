@@ -5,9 +5,24 @@ type WebRtcPlayerProps = {
   reloadKey: number;
 };
 
+function getWebRtcBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_WEBRTC_URL?.trim().replace(/\/$/, "");
+
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  if (typeof window === "undefined") {
+    return "/webrtc";
+  }
+
+  const port = import.meta.env.VITE_WEBRTC_PORT || "8889";
+  return `${window.location.protocol}//${window.location.hostname}:${port}`;
+}
+
 export function WebRtcPlayer({ stream, reloadKey }: WebRtcPlayerProps) {
   const path = stream === "main" ? "main" : "sub";
-  const src = `/webrtc/${path}?controls=true&muted=true&autoplay=true&playsInline=true&r=${reloadKey}`;
+  const src = `${getWebRtcBaseUrl()}/${path}/?controls=true&muted=true&autoplay=true&playsInline=true&r=${reloadKey}`;
 
   return (
     <div className="player-frame webrtc-player-frame">

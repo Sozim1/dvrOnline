@@ -119,7 +119,7 @@ Frontend: http://localhost:3000
 Backend:  http://localhost:3000/health
 ```
 
-O backend do Docker ja instala FFmpeg. No Docker, o frontend Nginx encaminha `/api` e `/health` para o backend dentro da rede do Compose. Por padrao, voce precisa expor externamente apenas a porta `3000`.
+O backend do Docker ja instala FFmpeg. No Docker, o frontend Nginx encaminha `/api` e `/health` para o backend dentro da rede do Compose. Para WebRTC de baixa latencia, o MediaMTX tambem publica a porta `8889` TCP e a porta `8189` UDP.
 
 O ao vivo usa WebRTC via MediaMTX por padrao. O HLS continua disponivel como fallback no dashboard.
 
@@ -151,6 +151,9 @@ Configuracao recomendada no `.env`:
 BACKEND_BIND=127.0.0.1
 FRONTEND_ORIGIN=http://localhost:3000
 PUBLIC_API_URL=
+PUBLIC_WEBRTC_URL=
+WEBRTC_HTTP_BIND=0.0.0.0
+WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_NOTEBOOK
 WEBRTC_UDP_PORT=8189
 ```
@@ -167,7 +170,9 @@ No roteador, aponte somente a porta do painel para o IP local do notebook:
 porta externa 3000 -> IP_DO_NOTEBOOK:3000
 ```
 
-Tambem libere a porta `3000` TCP e a porta `8189` UDP no firewall. No Windows, como administrador:
+Se tambem quiser WebRTC fora da LAN por redirecionamento de porta, encaminhe `8889/tcp` e `8189/udp` para o notebook. Se nao encaminhar essas portas, use HLS como fallback para acesso remoto.
+
+Tambem libere a porta `3000` TCP, a porta `8889` TCP e a porta `8189` UDP no firewall. No Windows, como administrador:
 
 ```powershell
 .\scripts\open-dvr-firewall.ps1
@@ -307,25 +312,29 @@ storage/recordings/camera-sala/2026-05-17/14-05-00.mp4
 
 O scanner indexa MP4 no SQLite a cada 15 segundos. Arquivos recentes/em gravacao sao marcados para nao entrarem em backup ou retencao.
 
-## Live view e qualidade HLS
+## Live view, WebRTC e qualidade HLS
 
-O navegador nao acessa RTSP direto. Para baixa latencia, o sistema usa MediaMTX para converter RTSP em WebRTC. A URL interna fica sob:
+O navegador nao acessa RTSP direto. Para baixa latencia, o sistema usa MediaMTX para converter RTSP em WebRTC. Por padrao, o dashboard calcula a URL do MediaMTX usando o mesmo host do painel e a porta `8889`:
 
 ```txt
-/webrtc/main
-/webrtc/sub
+http://IP_DO_SERVIDOR:8889/main/
+http://IP_DO_SERVIDOR:8889/sub/
 ```
 
-Para WebRTC funcionar fora do proprio container, configure:
+Se precisar forcar outra URL publica para o player, configure `PUBLIC_WEBRTC_URL` e reconstrua o frontend. Para WebRTC funcionar de outro PC/celular da rede, configure:
 
 ```env
+PUBLIC_WEBRTC_URL=http://IP_DO_SERVIDOR:8889
+WEBRTC_HTTP_BIND=0.0.0.0
+WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_SERVIDOR
 WEBRTC_UDP_PORT=8189
 ```
 
-No Linux, libere a porta UDP se usar firewall:
+No Linux, libere as portas se usar firewall:
 
 ```bash
+sudo ufw allow 8889/tcp
 sudo ufw allow 8189/udp
 ```
 

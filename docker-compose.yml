@@ -20,6 +20,8 @@ services:
       context: ./frontend
       args:
         VITE_API_URL: "${PUBLIC_API_URL:-}"
+        VITE_WEBRTC_URL: "${PUBLIC_WEBRTC_URL:-}"
+        VITE_WEBRTC_PORT: "${WEBRTC_HTTP_PORT:-8889}"
     container_name: camera-nvr-frontend
     environment:
       TZ: "${TZ:-America/Sao_Paulo}"
@@ -38,12 +40,13 @@ services:
       - .env
     environment:
       MTX_RTSPTRANSPORTS: tcp
-      MTX_WEBRTCADDITIONALHOSTS: "${WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}"
+      MTX_WEBRTCADDITIONALHOSTS: "${WEBRTC_ADDITIONAL_HOSTS:-}"
       MTX_PATHS_MAIN_SOURCE: "${RTSP_MAIN}"
       MTX_PATHS_SUB_SOURCE: "${RTSP_SUB}"
       MTX_PATHS_MAIN_SOURCEONDEMAND: "no"
       MTX_PATHS_SUB_SOURCEONDEMAND: "no"
     ports:
+      - "${WEBRTC_HTTP_BIND:-0.0.0.0}:${WEBRTC_HTTP_PORT:-8889}:8889"
       - "${WEBRTC_UDP_PORT:-8189}:8189/udp"
     restart: unless-stopped
     networks:

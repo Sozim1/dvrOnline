@@ -1,5 +1,6 @@
 param(
   [int]$Port = 3000,
+  [int]$WebRtcHttpPort = 8889,
   [int]$WebRtcUdpPort = 8189
 )
 
@@ -18,6 +19,21 @@ if (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue) {
     -LocalPort $Port | Out-Null
 
   Write-Host "Porta TCP $Port liberada no firewall do Windows."
+}
+
+$webrtcHttpRuleName = "Camera NVR DVR WebRTC TCP $WebRtcHttpPort"
+
+if (Get-NetFirewallRule -DisplayName $webrtcHttpRuleName -ErrorAction SilentlyContinue) {
+  Write-Host "Regra de firewall ja existe: $webrtcHttpRuleName"
+} else {
+  New-NetFirewallRule `
+    -DisplayName $webrtcHttpRuleName `
+    -Direction Inbound `
+    -Action Allow `
+    -Protocol TCP `
+    -LocalPort $WebRtcHttpPort | Out-Null
+
+  Write-Host "Porta TCP $WebRtcHttpPort liberada no firewall do Windows para WebRTC."
 }
 
 $webrtcRuleName = "Camera NVR DVR WebRTC UDP $WebRtcUdpPort"
