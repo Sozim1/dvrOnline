@@ -23,6 +23,7 @@ ENV TZ=America/Sao_Paulo
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY scripts ./scripts
 
 EXPOSE 4000
 CMD ["node", "dist/server.js"]

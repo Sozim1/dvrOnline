@@ -22,7 +22,8 @@ function getWebRtcBaseUrl() {
 
 export function WebRtcPlayer({ stream, reloadKey }: WebRtcPlayerProps) {
   const path = stream === "main" ? "main" : "sub";
-  const src = `${getWebRtcBaseUrl()}/${path}/?controls=true&muted=true&autoplay=true&playsInline=true&r=${reloadKey}`;
+  const startsMuted = import.meta.env.VITE_WEBRTC_MUTED !== "false";
+  const src = `${getWebRtcBaseUrl()}/${path}/?controls=true&muted=${startsMuted ? "true" : "false"}&autoplay=true&playsInline=true&r=${reloadKey}`;
 
   return (
     <div className="player-frame webrtc-player-frame">

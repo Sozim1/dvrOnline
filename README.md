@@ -152,10 +152,12 @@ BACKEND_BIND=127.0.0.1
 FRONTEND_ORIGIN=http://localhost:3000
 PUBLIC_API_URL=
 PUBLIC_WEBRTC_URL=
+PUBLIC_WEBRTC_MUTED=true
 WEBRTC_HTTP_BIND=0.0.0.0
 WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_NOTEBOOK
 WEBRTC_UDP_PORT=8189
+WEBRTC_AUDIO_BITRATE=32k
 ```
 
 Com essa configuracao, o celular/PC acessa:
@@ -325,11 +327,15 @@ Se precisar forcar outra URL publica para o player, configure `PUBLIC_WEBRTC_URL
 
 ```env
 PUBLIC_WEBRTC_URL=http://IP_DO_SERVIDOR:8889
+PUBLIC_WEBRTC_MUTED=true
 WEBRTC_HTTP_BIND=0.0.0.0
 WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_SERVIDOR
 WEBRTC_UDP_PORT=8189
+WEBRTC_AUDIO_BITRATE=32k
 ```
+
+O live view publica os paths `main` e `sub` no MediaMTX por meio de relays FFmpeg. O video fica em copia direta (`-c:v copy`) e apenas o audio e convertido para Opus, porque muitas cameras RTSP enviam AAC/MPEG-4 Audio e navegadores WebRTC normalmente esperam Opus ou G.711. Por padrao o player inicia mutado para o autoplay funcionar no Chrome; use o controle de volume do player para ouvir. Se quiser tentar iniciar com som, configure `PUBLIC_WEBRTC_MUTED=false` e reconstrua o frontend.
 
 No Linux, libere as portas se usar firewall:
 

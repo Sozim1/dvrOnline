@@ -22,6 +22,7 @@ services:
         VITE_API_URL: "${PUBLIC_API_URL:-}"
         VITE_WEBRTC_URL: "${PUBLIC_WEBRTC_URL:-}"
         VITE_WEBRTC_PORT: "${WEBRTC_HTTP_PORT:-8889}"
+        VITE_WEBRTC_MUTED: "${PUBLIC_WEBRTC_MUTED:-true}"
     container_name: camera-nvr-frontend
     environment:
       TZ: "${TZ:-America/Sao_Paulo}"
@@ -41,13 +42,43 @@ services:
     environment:
       MTX_RTSPTRANSPORTS: tcp
       MTX_WEBRTCADDITIONALHOSTS: "${WEBRTC_ADDITIONAL_HOSTS:-}"
-      MTX_PATHS_MAIN_SOURCE: "${RTSP_MAIN}"
-      MTX_PATHS_SUB_SOURCE: "${RTSP_SUB}"
+      MTX_PATHS_MAIN_SOURCE: "publisher"
+      MTX_PATHS_SUB_SOURCE: "publisher"
       MTX_PATHS_MAIN_SOURCEONDEMAND: "no"
       MTX_PATHS_SUB_SOURCEONDEMAND: "no"
     ports:
       - "${WEBRTC_HTTP_BIND:-0.0.0.0}:${WEBRTC_HTTP_PORT:-8889}:8889"
       - "${WEBRTC_UDP_PORT:-8189}:8189/udp"
+    restart: unless-stopped
+    networks:
+      - camera-nvr
+
+  webrtc-main-relay:
+    build:
+      context: ./backend
+    container_name: camera-nvr-webrtc-main-relay
+    env_file:
+      - .env
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+    command: ["sh", "/app/scripts/webrtc-relay.sh", "main", "RTSP_MAIN"]
+    depends_on:
+      - mediamtx
+    restart: unless-stopped
+    networks:
+      - camera-nvr
+
+  webrtc-sub-relay:
+    build:
+      context: ./backend
+    container_name: camera-nvr-webrtc-sub-relay
+    env_file:
+      - .env
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+    command: ["sh", "/app/scripts/webrtc-relay.sh", "sub", "RTSP_SUB"]
+    depends_on:
+      - mediamtx
     restart: unless-stopped
     networks:
       - camera-nvr
