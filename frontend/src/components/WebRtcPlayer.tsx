@@ -6,7 +6,7 @@ type WebRtcPlayerProps = {
 };
 
 export function WebRtcPlayer({ stream, reloadKey }: WebRtcPlayerProps) {
-  const path = stream === "main" ? "camera-main" : "camera-sub";
+  const path = stream === "main" ? "camera_main" : "camera_sub";
   const src = `/webrtc/${path}?controls=true&muted=true&autoplay=true&playsInline=true&r=${reloadKey}`;
 
   return (

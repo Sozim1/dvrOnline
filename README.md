@@ -313,7 +313,8 @@ O navegador nao acessa RTSP direto. Para baixa latencia, o sistema usa MediaMTX 
 
 ```txt
 /webrtc/camera-main
-/webrtc/camera-sub
+/webrtc/camera_main
+/webrtc/camera_sub
 ```
 
 Para WebRTC funcionar fora do proprio container, configure:
