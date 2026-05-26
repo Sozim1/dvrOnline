@@ -158,6 +158,7 @@ WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_NOTEBOOK
 WEBRTC_UDP_PORT=8189
 WEBRTC_AUDIO_BITRATE=32k
+WEBRTC_VIDEO_MODE=copy
 ```
 
 Com essa configuracao, o celular/PC acessa:
@@ -333,9 +334,21 @@ WEBRTC_HTTP_PORT=8889
 WEBRTC_ADDITIONAL_HOSTS=IP_DO_SERVIDOR
 WEBRTC_UDP_PORT=8189
 WEBRTC_AUDIO_BITRATE=32k
+WEBRTC_VIDEO_MODE=copy
 ```
 
 O live view publica os paths `main` e `sub` no MediaMTX por meio de relays FFmpeg. O video fica em copia direta (`-c:v copy`) e apenas o audio e convertido para Opus, porque muitas cameras RTSP enviam AAC/MPEG-4 Audio e navegadores WebRTC normalmente esperam Opus ou G.711. Por padrao o player inicia mutado para o autoplay funcionar no Chrome; use o controle de volume do player para ouvir. Se quiser tentar iniciar com som, configure `PUBLIC_WEBRTC_MUTED=false` e reconstrua o frontend.
+
+Se o log do relay mostrar `Non-monotonous DTS`, `PTS invalid` ou o MediaMTX responder `no stream is available on path`, a camera esta enviando timestamps instaveis. Nesse caso, habilite a regeneracao do video apenas para o live WebRTC:
+
+```env
+WEBRTC_VIDEO_MODE=transcode
+WEBRTC_VIDEO_BITRATE=1800k
+WEBRTC_VIDEO_FPS=15
+WEBRTC_VIDEO_GOP_SECONDS=2
+```
+
+Isso nao muda a gravacao principal, que continua usando o stream original da camera.
 
 No Linux, libere as portas se usar firewall:
 
